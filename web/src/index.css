@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 
-/* 用 <html class="dark"> 切換深色（設定頁可選淺色 / 深色 / 跟隨系統，預設淺色） */
+/* 用 <html class="dark"> 切換深色（設定頁可選深色 / 淺色 / 跟隨系統，預設深色） */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*

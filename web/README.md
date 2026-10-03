@@ -40,7 +40,7 @@ src/
 | 字級 | `display`、`headline`、`title`、`body`、`callout`、`caption`；大數字用 `font-rounded` |
 | 圓角 | `control`（按鈕、輸入）、`card`（卡片）、`widget`（騎乘頁小工具）、`panel`（警示卡、面板） |
 
-風格：整體參考 Cloudflare 的白底橘色；騎乘頁採 iOS 小工具風格（漸層警示卡、毛玻璃數值、圓體數字、柔和陰影）。
+風格：配色參考 Cloudflare 的品牌橘；**預設深色**，設定頁可切淺色（白底）或跟隨系統。騎乘頁採 iOS 小工具風格（漸層警示卡、毛玻璃數值、圓體數字、柔和陰影）。
 
 ## 指令
 

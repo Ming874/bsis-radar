@@ -39,14 +39,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   keepAwake: true,
   speedUnit: 'kmh',
   autoReconnect: true,
-  theme: 'light',
+  theme: 'dark',
 };
 
-// v2：改版後預設為淺色主題，舊的偏好設定不沿用
-const STORAGE_KEY = 'radarA.settings.v2';
+// v3：預設改為深色主題，舊版存的偏好設定不沿用（index.html 開頭的主題腳本也讀這個名稱）
+export const SETTINGS_STORAGE_KEY = 'radarA.settings.v3';
 
 export function createSettingsStore() {
-  const saved = loadJson<Partial<AppSettings>>(STORAGE_KEY, {});
+  const saved = loadJson<Partial<AppSettings>>(SETTINGS_STORAGE_KEY, {});
   const store = createStore<SettingsStore>()((set) => ({
     ...DEFAULT_SETTINGS,
     ...saved,
@@ -55,7 +55,7 @@ export function createSettingsStore() {
   }));
   store.subscribe((s) => {
     const keys = Object.keys(DEFAULT_SETTINGS) as Array<keyof AppSettings>;
-    saveJson(STORAGE_KEY, Object.fromEntries(keys.map((k) => [k, s[k]])));
+    saveJson(SETTINGS_STORAGE_KEY, Object.fromEntries(keys.map((k) => [k, s[k]])));
   });
   return store;
 }

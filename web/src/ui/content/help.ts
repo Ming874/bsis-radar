@@ -156,7 +156,7 @@ export const APP_HELP = {
   },
   theme: {
     title: '主題',
-    short: '淺色在大太陽下比較清楚；深色在夜間比較不刺眼',
+    short: '預設深色：夜間不刺眼；大太陽下可改淺色比較清楚',
     body: ['「跟隨系統」會依手機或電腦的深色模式自動切換。'],
   },
   autoReconnect: {

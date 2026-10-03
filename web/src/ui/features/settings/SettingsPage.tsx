@@ -148,8 +148,8 @@ export function SettingsPage() {
                 value={s.theme}
                 onChange={(v) => update({ theme: v })}
                 options={[
-                  { value: 'light', label: '淺色' },
                   { value: 'dark', label: '深色' },
+                  { value: 'light', label: '淺色' },
                   { value: 'system', label: '跟隨系統' },
                 ]}
               />
