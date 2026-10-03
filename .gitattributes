@@ -1,0 +1,10 @@
+* text=auto
+# Windows 指令檔一律用 CRLF，cmd / PowerShell 才不會出錯
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+# 二進位檔
+*.bin binary
+*.png binary
+*.jpg binary
+*.pdf binary
+*.exe binary

@@ -1,0 +1,16 @@
+# 韌體建置輸出
+firmware/.build/
+firmware/tests/*.exe
+firmware/tools/
+
+# 網頁
+web/node_modules/
+web/dist/
+web/coverage/
+
+# 系統 / 編輯器
+.DS_Store
+Thumbs.db
+
+# 計畫書 PDF 含個人資料，不放進公開 repo
+docs/proposal/
