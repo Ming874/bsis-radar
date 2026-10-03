@@ -5,6 +5,13 @@
 /** 0 安全 / 1 注意（確認來車在警示距離內）/ 2 危險（即將到達） */
 export type AlertLevel = 0 | 1 | 2;
 
+/**
+ * 速度從哪裡來（韌體 VS 欄位）：都卜勒速度與「距離變化率」交叉核對的結果。
+ * none 沒有追蹤 / checking 核對中 / doppler 都卜勒（已核對）/ unfolded 超過 10 m/s 折疊、已還原 /
+ * rangeRate 都卜勒不可信、改用距離變化率 / signFlip 都卜勒正負號與距離變化相反（請檢查 SIGN）
+ */
+export type VelocitySource = 'none' | 'checking' | 'doppler' | 'unfolded' | 'rangeRate' | 'signFlip';
+
 /** ESP32 每 200 ms 送來的一筆遙測（欄位對應韌體 Telemetry.h） */
 export interface Telemetry {
   radarOnline: boolean; // R
@@ -19,6 +26,8 @@ export interface Telemetry {
   energy: number; // E：反射能量（最近 5 筆中位數）
   uptimeS: number; // T：ESP32 開機秒數
   ownSpeedKmh: number | null; // S：自身車速（隊友的 Radar B，選用）
+  velocitySource: VelocitySource | null; // VS：速度來源（韌體 2.1 起；舊韌體為 null）
+  rangeRateMps: number | null; // RR：由距離斜率算出的接近速度（正 = 接近），資料不足時為 null
   receivedAt: number; // 收到的時間（ms），由網頁填入
 }
 

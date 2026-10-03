@@ -2,14 +2,14 @@
  * @file   AppConfig.h
  * @brief  【應用層】編譯期設定：腳位、雷達設定、藍牙、輸出週期。
  *
- * 執行中可調整的偵測參數（測試模式、速度/能量門檻、警示距離）不在這裡，
- * 它們存在 NVS，用網頁「校正」頁或序列埠指令修改，見 src/core/DetectionConfig.h。
- * 演算法細部參數（確認筆數、危險 TTC…）見 src/core/ThreatTracker.h 的 tuning。
+ * 執行中可調整的 9 項偵測參數（測試模式、速度/能量門檻、警示距離、危險 TTC…）不在這裡，
+ * 它們存在 NVS，用網頁「裝置」頁或序列埠指令修改，見 src/core/DetectionConfig.h。
+ * 演算法內部參數（卡爾曼濾波、交叉核對閘門）見 src/core/ThreatTracker.h 與 VelocityCheck.h。
  */
 #pragma once
 #include <stdint.h>
 
-#define FW_VERSION "2.0.0"
+#define FW_VERSION "2.1.0"
 
 namespace app {
 

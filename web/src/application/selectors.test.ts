@@ -15,6 +15,8 @@ const telemetry = (patch: Partial<Telemetry> = {}): Telemetry => ({
   energy: 0,
   uptimeS: 1,
   ownSpeedKmh: null,
+  velocitySource: null,
+  rangeRateMps: null,
   receivedAt: 10_000,
   ...patch,
 });

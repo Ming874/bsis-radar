@@ -177,10 +177,11 @@ void RadarApp::printDebug(uint32_t nowMs) {
   lastDebugMs_ = nowMs;
   if (!radar_.online()) return;  // 離線時驅動層會自己印出原因
 
-  static const char* const kLevelText[] = {"安全", "注意", "!! 危險 !!"};
+  static const char* const kLevelText[]  = {"安全", "注意", "!! 危險 !!"};
+  static const char* const kSourceText[] = {"-", "核對中", "都卜勒", "折疊還原", "距離變化率", "正負號相反"};
   const ThreatState&       t = tracker_.state();
   const bool               raw = hasRaw_ && lastRaw_.targets > 0;
-  console_.printf("%-6s | N=%u RD=%5.2f RV=%6.2f E=%-8lu | D=%5.2f V=%5.2f TTC=%4.1f | %s%s\n",
+  console_.printf("%-6s | N=%u RD=%5.2f RV=%6.2f E=%-8lu | D=%5.2f V=%5.2f RR=%5.2f TTC=%4.1f [%s] | %s%s\n",
                   radar_.stateName(),
                   raw ? 1U : 0U,
                   raw ? lastRaw_.rangeM : -1.0f,
@@ -188,7 +189,9 @@ void RadarApp::printDebug(uint32_t nowMs) {
                   static_cast<unsigned long>(tracker_.energyMedian()),
                   t.distanceM,
                   t.closingMps,
+                  t.hasRangeRate ? t.rangeRateMps : 0.0f,
                   t.ttcS,
+                  kSourceText[static_cast<uint8_t>(t.velocitySource)],
                   kLevelText[static_cast<uint8_t>(t.level)],
                   ble_.connected() ? "  [手機已連]" : "");
 }

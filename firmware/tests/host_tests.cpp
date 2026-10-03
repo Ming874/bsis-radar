@@ -7,6 +7,8 @@
 #include "comm/CommandParser.h"
 #include "comm/Telemetry.h"
 #include "core/DetectionConfig.h"
+#include "core/RangeKalman.h"
+#include "core/RangeRateWindow.h"
 #include "core/ThreatTracker.h"
 #include "drivers/C4001Protocol.h"
 
@@ -264,8 +266,10 @@ static void testTracker() {
   {  // SIGN = +1（雷達裝反、正號代表接近）
     DetectionConfig cfg = roadConfig();
     cfg.approachSign = 1;
+    // SIGN 設錯（雷達其實是負號 = 接近）：距離明明在變近，交叉核對會發現正負號相反，照樣警示並回報
     ThreatTracker t;
-    CHECK(runApproach(t, cfg, 12.0f, +7.0f * -1.0f, 60000, 100, 1500).maxLevel == AlertLevel::Safe);
+    CHECK(runApproach(t, cfg, 12.0f, -7.0f, 60000, 100, 1500).maxLevel == AlertLevel::Danger);
+    CHECK(t.state().velocitySource == VelocitySource::SignFlip);
     ThreatTracker t2;
     RunResult r;
     for (uint32_t ms = 0; ms <= 1500; ms += 100) {
@@ -273,6 +277,225 @@ static void testTracker() {
       if (t2.state().level > r.maxLevel) r.maxLevel = t2.state().level;
     }
     CHECK(r.maxLevel == AlertLevel::Danger);
+  }
+}
+
+// ------------------------------------------------------------ 速度交叉核對（都卜勒 × 距離變化率）
+// 可重現的亂數（LCG + Box-Muller）：雜訊測試每次結果都一樣
+struct Rng {
+  uint32_t s;
+  explicit Rng(uint32_t seed) : s(seed) {}
+  float uniform() {
+    s = s * 1664525u + 1013904223u;
+    return (static_cast<float>(s >> 8) + 0.5f) / 16777216.0f;
+  }
+  float gauss() { return sqrtf(-2.0f * logf(uniform())) * cosf(6.2831853f * uniform()); }
+};
+
+// C4001 速度輸出的幾種「出錯」模型（雷達座標：負 = 接近）
+enum class DopplerModel { Ideal, Wrap, Clamp, Zero };
+static float radarSpeed(float v, DopplerModel model) {
+  switch (model) {
+    case DopplerModel::Wrap: {  // 超過 ±10 m/s 折疊（週期 20 m/s）
+      float w = fmodf(v + 10.0f, 20.0f);
+      if (w < 0.0f) w += 20.0f;
+      return w - 10.0f;
+    }
+    case DopplerModel::Clamp:  // 超過 ±10 m/s 就停在 10
+      return v > 10.0f ? 10.0f : (v < -10.0f ? -10.0f : v);
+    case DopplerModel::Zero:  // 速度欄位一直是 0
+      return 0.0f;
+    default:
+      return v;
+  }
+}
+
+struct Scenario {
+  float        startM      = 20.0f;
+  float        closingMps  = 7.0f;   // 起始接近速度（正 = 接近）
+  float        accel       = 0.0f;   // 接近速度每秒變化（m/s²）
+  DopplerModel model       = DopplerModel::Ideal;
+  float        rangeNoise  = 0.2f;   // 距離雜訊 σ（m）
+  float        speedNoise  = 0.15f;  // 都卜勒雜訊 σ（m/s）
+  float        outlierRate = 0.0f;   // 每筆有多少機率跳 ±2.5 m（車身反射點跳動）
+  uint32_t     durationMs  = 3000;
+};
+
+struct ScenarioResult {
+  AlertLevel     maxLevel   = AlertLevel::Safe;
+  float          firstWarnM = -1.0f;
+  float          rmsClosing = 0.0f;  // 追蹤 1 秒後的接近速度均方根誤差
+  float          rmsDist    = 0.0f;
+  float          finalErr   = 0.0f;  // 最後一筆的接近速度誤差
+  VelocitySource lastSource = VelocitySource::None;
+};
+
+static ScenarioResult runScenario(const Scenario& sc, const DetectionConfig& cfg, uint32_t seed) {
+  Rng            rng(seed);
+  ThreatTracker  t;
+  ScenarioResult r;
+  double         seC = 0.0, seD = 0.0;
+  int            n           = 0;
+  float          firstTrackS = -1.0f;
+  for (uint32_t ms = 0; ms <= sc.durationMs; ms += 100) {
+    const float ts      = ms / 1000.0f;
+    const float closing = sc.closingMps + sc.accel * ts;
+    const float range   = sc.startM - (sc.closingMps * ts + 0.5f * sc.accel * ts * ts);
+    if (range < 1.0f || closing < 0.5f) break;
+    float measured = range + sc.rangeNoise * rng.gauss();
+    if (sc.outlierRate > 0.0f && rng.uniform() < sc.outlierRate) measured += rng.uniform() < 0.5f ? -2.5f : 2.5f;
+    const float speed = radarSpeed(-closing + sc.speedNoise * rng.gauss(), sc.model);
+    t.onMeasurement(target(measured, speed, 60000), 1000 + ms, cfg);
+    t.update(1000 + ms, cfg);
+
+    const ThreatState& s = t.state();
+    if (s.level > r.maxLevel) r.maxLevel = s.level;
+    if (s.warning() && r.firstWarnM < 0.0f) r.firstWarnM = range;
+    if (s.tracking) {
+      if (firstTrackS < 0.0f) firstTrackS = ts;
+      if (ts - firstTrackS >= 1.0f) {
+        seC += (s.closingMps - closing) * (s.closingMps - closing);
+        seD += (s.distanceM - range) * (s.distanceM - range);
+        n++;
+      }
+      r.finalErr = s.closingMps - closing;
+    }
+    r.lastSource = s.velocitySource;
+  }
+  if (n > 0) {
+    r.rmsClosing = static_cast<float>(sqrt(seC / n));
+    r.rmsDist    = static_cast<float>(sqrt(seD / n));
+  }
+  return r;
+}
+
+static void testEstimators() {
+  printf("[RangeRateWindow / RangeKalman]\n");
+  {  // 等速直線：斜率要精確，標準差符合 σr·√12 / (T·√(N(N²−1)))
+    RangeRateWindow w;
+    for (uint32_t i = 0; i < 8; i++) w.push(1000 + i * 100, 15.0f - 0.7f * i);
+    const RateFit f = w.fit(0.2f, 1000, 6, 0.45f);
+    CHECK(f.valid && f.count == 8);
+    CHECK_NEAR(f.rate, -7.0f, 1e-3);
+    CHECK_NEAR(f.sigma, 0.2f * sqrtf(12.0f) / (0.1f * sqrtf(8.0f * 63.0f)), 1e-3);
+    CHECK_NEAR(f.centerAgeS, 0.35f, 1e-4);
+    CHECK(!w.fit(0.2f, 250, 6, 0.45f).valid);  // 只看最近 0.25 s：筆數不夠
+  }
+  {  // 卡爾曼：只用距離更新也能收斂到正確速度
+    RangeKalman kf;
+    kf.init(20.0f, 0.0f, 0.04f, 36.0f);
+    for (int i = 1; i <= 15; i++) {
+      kf.predict(0.1f, 9.0f);
+      kf.updateRange(20.0f - 0.6f * i, 0.04f);
+    }
+    CHECK_NEAR(kf.rate(), -6.0f, 0.3f);
+    CHECK(kf.varRange() > 0.0f && kf.varRate() > 0.0f);
+  }
+}
+
+static void testVelocityCrossCheck() {
+  printf("[速度交叉核對]\n");
+  const DetectionConfig road = roadConfig();
+
+  {  // 一般情況（雜訊 σr 0.2 m、σv 0.15 m/s，20 組亂數）：都卜勒經核對後採用，誤差小
+    float worstC = 0.0f, worstD = 0.0f;
+    bool  allDanger = true, allDoppler = true;
+    for (uint32_t seed = 1; seed <= 20; seed++) {
+      Scenario             sc;
+      const ScenarioResult r = runScenario(sc, road, seed);
+      worstC                 = fmaxf(worstC, r.rmsClosing);
+      worstD                 = fmaxf(worstD, r.rmsDist);
+      allDanger              = allDanger && r.maxLevel == AlertLevel::Danger;
+      allDoppler             = allDoppler && r.lastSource == VelocitySource::Doppler;
+    }
+    CHECK(allDanger);
+    CHECK(allDoppler);
+    CHECK(worstC < 0.25f);
+    CHECK(worstD < 0.2f);
+    printf("  car 7 m/s, noisy: worst RMS closing %.3f m/s, worst RMS distance %.3f m\n", worstC, worstD);
+  }
+  {  // 13 m/s 的車：都卜勒折疊成 +7（看起來在遠離）→ 依距離變化率還原，照樣警示
+    Scenario sc;
+    sc.closingMps          = 13.0f;
+    sc.model               = DopplerModel::Wrap;
+    sc.durationMs          = 1500;
+    const ScenarioResult r = runScenario(sc, road, 7);
+    CHECK(r.maxLevel == AlertLevel::Danger);
+    CHECK(r.firstWarnM >= 12.0f);
+    CHECK(r.lastSource == VelocitySource::Unfolded);
+    CHECK(fabsf(r.finalErr) < 0.5f);
+    printf("  car 13 m/s, Doppler wraps: first warning at %.1f m, final speed error %.2f m/s\n", r.firstWarnM,
+           r.finalErr);
+  }
+  {  // 都卜勒卡在 10 m/s（不折疊、飽和）→ 長期核對發現不一致，改用距離變化率
+    Scenario sc;
+    sc.closingMps          = 13.0f;
+    sc.model               = DopplerModel::Clamp;
+    sc.durationMs          = 1500;
+    const ScenarioResult r = runScenario(sc, road, 11);
+    CHECK(r.maxLevel == AlertLevel::Danger);
+    CHECK(r.lastSource == VelocitySource::RangeRate);
+    CHECK(fabsf(r.finalErr) < 1.0f);
+    printf("  car 13 m/s, Doppler clamps at 10: final speed error %.2f m/s\n", r.finalErr);
+  }
+  {  // 都卜勒一直報 0：舊演算法永遠不警示；改用距離變化率後照樣警示
+    Scenario sc;
+    sc.closingMps          = 6.0f;
+    sc.model               = DopplerModel::Zero;
+    const ScenarioResult r = runScenario(sc, road, 3);
+    CHECK(r.maxLevel == AlertLevel::Danger);
+    CHECK(r.lastSource == VelocitySource::RangeRate);
+    CHECK(fabsf(r.finalErr) < 0.8f);
+  }
+  {  // 加速超過 10 m/s（8 → 12 m/s）：中途開始折疊，追蹤不中斷
+    Scenario sc;
+    sc.closingMps          = 8.0f;
+    sc.accel               = 2.0f;
+    sc.model               = DopplerModel::Wrap;
+    sc.durationMs          = 1800;
+    const ScenarioResult r = runScenario(sc, road, 5);
+    CHECK(r.maxLevel == AlertLevel::Danger);
+    CHECK(r.lastSource == VelocitySource::Unfolded);
+    CHECK(fabsf(r.finalErr) < 0.6f);
+  }
+  {  // 煞車（8 → 2 m/s）：追蹤沒有明顯落後
+    Scenario sc;
+    sc.startM              = 18.0f;
+    sc.closingMps          = 8.0f;
+    sc.accel               = -4.0f;
+    sc.durationMs          = 1500;
+    const ScenarioResult r = runScenario(sc, road, 9);
+    CHECK(r.rmsClosing < 0.4f);
+  }
+  {  // 車身反射點偶爾跳 ±2.5 m（10%）：跳值被擋掉，距離與速度仍準
+    Scenario sc;
+    sc.outlierRate         = 0.1f;
+    const ScenarioResult r = runScenario(sc, road, 21);
+    CHECK(r.maxLevel == AlertLevel::Danger);
+    CHECK(r.rmsDist < 0.35f);
+    CHECK(r.rmsClosing < 0.35f);
+  }
+  {  // 真的換了目標（另一台車在 5 m 出現並持續）：連續 3 筆彼此一致的跳值 → 改追新目標
+    ThreatTracker t;
+    for (uint32_t i = 0; i < 8; i++) t.onMeasurement(target(15.0f - 0.6f * i, -6.0f, 60000), 1000 + i * 100, road);
+    for (uint32_t i = 8; i < 14; i++) {
+      t.onMeasurement(target(5.0f - 0.4f * (i - 8), -4.0f, 60000), 1000 + i * 100, road);
+      t.update(1000 + i * 100, road);
+    }
+    CHECK_NEAR(t.state().distanceM, 3.0f, 0.5f);
+    CHECK(t.state().level == AlertLevel::Danger);
+  }
+  {  // SIGN = 0（不判斷方向）：遠離的物體不再誤報（距離變化率判斷出方向）
+    DetectionConfig cfg = roadConfig();
+    cfg.approachSign    = 0;
+    ThreatTracker t;
+    AlertLevel    maxLevel = AlertLevel::Safe;
+    for (uint32_t ms = 0; ms <= 2000; ms += 100) {
+      t.onMeasurement(target(3.0f + 5.0f * ms / 1000.0f, +5.0f, 90000), 1000 + ms, cfg);
+      t.update(1000 + ms, cfg);
+      if (t.state().level > maxLevel) maxLevel = t.state().level;
+    }
+    CHECK(maxLevel == AlertLevel::Safe);
   }
 }
 
@@ -351,14 +574,17 @@ static void testTelemetry() {
   s.raw              = target(8.5f, -6.31f, 52000);
   s.energyMedian     = 52000;
   s.uptimeS          = 35;
+  s.threat.velocitySource = VelocitySource::Doppler;
+  s.threat.hasRangeRate   = true;
+  s.threat.rangeRateMps   = 6.11f;
   CHECK(formatTelemetry(s, line, sizeof(line)) > 0);
-  CHECK(strcmp(line, "R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35\n") == 0);
+  CHECK(strcmp(line, "R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35 VS=2 RR=6.11\n") == 0);
   printf("  %s", line);
 
   TelemetrySnapshot idle;  // 雷達離線、沒目標
   idle.uptimeS = 7;
   CHECK(formatTelemetry(idle, line, sizeof(line)) > 0);
-  CHECK(strcmp(line, "R=0 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=0 RD=-1.00 RV=0.00 E=0 T=7\n") == 0);
+  CHECK(strcmp(line, "R=0 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=0 RD=-1.00 RV=0.00 E=0 T=7 VS=0\n") == 0);
 
   CHECK(formatTelemetry(s, line, 20) == 0);  // 空間不夠：不輸出半行
 
@@ -373,8 +599,8 @@ static void testTelemetry() {
   worst.holdMs       = limits::kHoldHi;
   worst.confirmHits  = limits::kConfirmHi;
   char cfgLine[kConfigLineMax];
-  CHECK(formatConfig(worst, "2.0.0", cfgLine, sizeof(cfgLine)) > 0);
-  CHECK(formatConfig(DetectionConfig::defaults(), "2.0.0", cfgLine, sizeof(cfgLine)) > 0);
+  CHECK(formatConfig(worst, "2.1.0", cfgLine, sizeof(cfgLine)) > 0);
+  CHECK(formatConfig(DetectionConfig::defaults(), "2.1.0", cfgLine, sizeof(cfgLine)) > 0);
 
   TelemetrySnapshot big = s;
   big.threat.distanceM  = 20.0f;
@@ -383,17 +609,23 @@ static void testTelemetry() {
   big.raw               = target(100.0f, -50.0f, 4000000000UL);
   big.energyMedian      = 4000000000UL;
   big.uptimeS           = 4294967295UL;
+  big.threat.velocitySource = VelocitySource::SignFlip;
+  big.threat.hasRangeRate   = true;
+  big.threat.rangeRateMps   = -150.0f;  // 超出範圍：夾在 -99.99
   char telLine[kTelemetryLineMax];
   CHECK(formatTelemetry(big, telLine, sizeof(telLine)) > 0);
+  CHECK(strstr(telLine, " VS=5 RR=-99.99\n") != nullptr);
 
-  CHECK(formatConfig(DetectionConfig::defaults(), "2.0.0", line, sizeof(line)) > 0);
-  CHECK(strcmp(line, "CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 FW=2.0.0\n") == 0);
+  CHECK(formatConfig(DetectionConfig::defaults(), "2.1.0", line, sizeof(line)) > 0);
+  CHECK(strcmp(line, "CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 FW=2.1.0\n") == 0);
   printf("  %s", line);
 }
 
 int main() {
   testFrameParser();
   testTracker();
+  testEstimators();
+  testVelocityCrossCheck();
   testCommands();
   testTelemetry();
   printf("\n%d checks, %d failures\n", gChecks, gFailures);

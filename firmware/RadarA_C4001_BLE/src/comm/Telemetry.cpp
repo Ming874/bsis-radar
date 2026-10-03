@@ -16,7 +16,16 @@ size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
   const bool         online = s.radarOnline;
   const bool         raw    = online && s.hasRaw && s.raw.targets > 0;
 
-  const int n = snprintf(out, cap, "R=%d W=%d L=%d D=%.2f V=%.2f TTC=%.1f N=%u RD=%.2f RV=%.2f E=%lu T=%lu\n",
+  // 距離變化率只在資料足夠時才送（夾在 ±99.99，欄位長度固定在範圍內）
+  char rr[16] = "";
+  if (online && t.hasRangeRate) {
+    float v = t.rangeRateMps;
+    if (v > 99.99f) v = 99.99f;
+    if (v < -99.99f) v = -99.99f;
+    snprintf(rr, sizeof(rr), " RR=%.2f", v);
+  }
+
+  const int n = snprintf(out, cap, "R=%d W=%d L=%d D=%.2f V=%.2f TTC=%.1f N=%u RD=%.2f RV=%.2f E=%lu T=%lu VS=%u%s\n",
                          online ? 1 : 0,
                          t.warning() ? 1 : 0,
                          static_cast<int>(t.level),
@@ -27,7 +36,9 @@ size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
                          raw ? s.raw.rangeM : -1.0f,
                          raw ? s.raw.speedMps : 0.0f,
                          online ? static_cast<unsigned long>(s.energyMedian) : 0UL,
-                         static_cast<unsigned long>(s.uptimeS));
+                         static_cast<unsigned long>(s.uptimeS),
+                         online ? static_cast<unsigned>(t.velocitySource) : 0U,
+                         rr);
   return finish(n, cap);
 }
 

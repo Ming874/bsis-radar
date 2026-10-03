@@ -132,8 +132,8 @@ export const NUMERIC_PARAMS: Record<NumericKey, NumericParam> = {
 
 export const SIGN_OPTIONS: Array<{ value: -1 | 0 | 1; label: string; description: string }> = [
   { value: -1, label: '負 = 接近', description: '依實測，C4001 接近時速度為負（建議）' },
-  { value: 1, label: '正 = 接近', description: '人走近不警示、後退才警示時改用這個' },
-  { value: 0, label: '不判斷方向', description: '只看速度大小，遠離的車也會觸發（不建議）' },
+  { value: 1, label: '正 = 接近', description: '裝置頁出現「正負號相反」提示時改用這個' },
+  { value: 0, label: '不判斷方向', description: '方向改由距離變化判斷（約慢 0.3 秒）' },
 ];
 
 export const signLabel = (s: -1 | 0 | 1) => SIGN_OPTIONS.find((o) => o.value === s)?.label ?? String(s);

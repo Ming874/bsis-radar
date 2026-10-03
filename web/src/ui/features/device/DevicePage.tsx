@@ -7,11 +7,13 @@ import { useShallow } from 'zustand/react/shallow';
 import { actions, capabilities, radarStore, useRadar } from '../../../application/container';
 import { selectEnergyPeak } from '../../../application/selectors';
 import { DEFAULT_DEVICE_CONFIG } from '../../../domain/protocol';
+import type { VelocitySource } from '../../../domain/types';
 import { formatDuration, mpsToKmh } from '../../../domain/units';
 import { PARAM_HELP, VALUE_HELP } from '../../content/help';
 import {
   ActivityIcon,
   AlertIcon,
+  Banner,
   BluetoothIcon,
   BookIcon,
   Button,
@@ -30,8 +32,10 @@ import {
   Section,
   Segmented,
   SlidersIcon,
+  StatusDot,
   TerminalIcon,
   ZapIcon,
+  type DotState,
   type Tone,
 } from '../../kit';
 import { NumericParamSheet, SignSheet } from './ParamSheet';
@@ -51,31 +55,92 @@ const PARAM_ICON: Record<ParamKey, { icon: ReactNode; tone: Tone }> = {
 
 type SheetState = { kind: 'param'; key: ParamKey } | { kind: 'console' } | { kind: 'guide' } | { kind: 'defaults' } | { kind: 'reboot' } | null;
 
+/** 速度交叉核對的結果（韌體 VS 欄位） */
+const VELOCITY_SOURCE: Record<VelocitySource, { label: string; dot: DotState }> = {
+  none: { label: '—', dot: 'off' },
+  checking: { label: '核對中', dot: 'busy' },
+  doppler: { label: '一致', dot: 'ok' },
+  unfolded: { label: '已還原折疊', dot: 'ok' },
+  rangeRate: { label: '改用距離', dot: 'busy' },
+  signFlip: { label: '正負號相反', dot: 'error' },
+};
+
+interface Cell {
+  label: string;
+  value: string;
+  unit?: string;
+  hint?: string;
+  dot?: DotState;
+}
+
 function RawData() {
   const { telemetry, peak } = useRadar(useShallow((s) => ({ telemetry: s.telemetry, peak: selectEnergyPeak(s) })));
   const has = (telemetry?.rawTargets ?? 0) > 0;
   const speed = telemetry?.rawSpeedMps ?? null;
-  const cells: Array<[string, string, string?]> = [
-    ['目標數', telemetry ? String(telemetry.rawTargets) : '—'],
-    ['原始距離', has && telemetry?.rawRangeM != null ? telemetry.rawRangeM.toFixed(2) : '—', 'm'],
-    ['原始速度', speed === null ? '—' : speed.toFixed(2), 'm/s'],
-    ['反射能量', telemetry ? telemetry.energy.toLocaleString() : '—'],
-    ['10 秒最大能量', telemetry ? peak.toLocaleString() : '—'],
-    ['ESP32 運作', telemetry ? formatDuration(telemetry.uptimeS) : '—'],
+  const rangeRate = telemetry?.rangeRateMps ?? null;
+  const closing = telemetry?.closingMps ?? null;
+  const source = telemetry?.velocitySource ?? null;
+  const cells: Cell[] = [
+    { label: '原始距離', value: has && telemetry?.rawRangeM != null ? telemetry.rawRangeM.toFixed(2) : '—', unit: 'm' },
+    {
+      label: '原始速度',
+      value: speed === null ? '—' : speed.toFixed(2),
+      unit: 'm/s',
+      hint: speed === null ? undefined : `${mpsToKmh(speed).toFixed(0)} km/h`,
+    },
+    {
+      label: '距離變化率',
+      value: rangeRate === null ? '—' : Math.abs(rangeRate).toFixed(2),
+      unit: 'm/s',
+      hint: rangeRate === null ? undefined : rangeRate >= 0 ? '接近中' : '遠離中',
+    },
+    {
+      label: '速度核對',
+      value: source === null ? '—' : VELOCITY_SOURCE[source].label,
+      dot: source === null ? undefined : VELOCITY_SOURCE[source].dot,
+    },
+    { label: '追蹤接近速度', value: closing === null ? '—' : closing.toFixed(2), unit: 'm/s' },
+    { label: '目標數', value: telemetry ? String(telemetry.rawTargets) : '—' },
+    { label: '反射能量', value: telemetry ? telemetry.energy.toLocaleString() : '—' },
+    { label: '10 秒最大能量', value: telemetry ? peak.toLocaleString() : '—' },
+    { label: 'ESP32 運作', value: telemetry ? formatDuration(telemetry.uptimeS) : '—' },
   ];
   return (
     <div className="grid grid-cols-3 gap-px bg-line">
-      {cells.map(([label, value, unit]) => (
+      {cells.map(({ label, value, unit, hint, dot }) => (
         <div key={label} className="min-w-0 bg-surface px-3 py-3">
           <div className="truncate text-caption font-semibold text-ink-3">{label}</div>
-          <div className="tabular truncate text-title font-bold text-ink">
-            {value}
-            {unit && value !== '—' && <span className="ml-0.5 text-caption font-medium text-ink-2">{unit}</span>}
+          <div className="flex items-center gap-1.5 text-title font-bold text-ink">
+            {dot && <StatusDot state={dot} />}
+            <span className="tabular truncate">
+              {value}
+              {unit && value !== '—' && <span className="ml-0.5 text-caption font-medium text-ink-2">{unit}</span>}
+            </span>
           </div>
-          {label === '原始速度' && speed !== null && <div className="text-caption text-ink-3">{mpsToKmh(speed).toFixed(0)} km/h</div>}
+          {hint && <div className="truncate text-caption text-ink-3">{hint}</div>}
         </div>
       ))}
     </div>
+  );
+}
+
+/** 都卜勒正負號與距離變化相反：提示修正「接近方向」，一鍵改好 */
+function SignFlipNotice({ sign }: { sign: -1 | 0 | 1 }) {
+  const flipped = useRadar((s) => s.telemetry?.velocitySource === 'signFlip');
+  if (!flipped || sign === 0) return null;
+  const next = (sign === -1 ? 1 : -1) as -1 | 1;
+  return (
+    <Banner
+      tone="warning"
+      title="雷達速度的正負號看起來設反了"
+      action={
+        <Button size="sm" variant="primary" onClick={() => void radarStore.getState().sendCommand({ type: 'approachSign', sign: next })}>
+          改成「{signLabel(next)}」
+        </Button>
+      }
+    >
+      距離明明在變近，雷達報的速度方向卻相反。ESP32 已自動改用距離變化判斷，修正「接近方向」後速度會更精確。
+    </Banner>
   );
 }
 
@@ -127,6 +192,8 @@ export function DevicePage() {
   return (
     <div className="space-y-6">
       <PageHeader title="裝置" subtitle={subtitle} />
+
+      {config && <SignFlipNotice sign={config.approachSign} />}
 
       <div className="flex flex-col gap-6 lg:grid lg:grid-cols-2 lg:items-start">
         <div className="flex flex-col gap-6">

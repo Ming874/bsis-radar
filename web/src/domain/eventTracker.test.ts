@@ -16,6 +16,8 @@ function sample(t: number, level: AlertLevel, distanceM: number | null = null, c
     energy: 0,
     uptimeS: t / 1000,
     ownSpeedKmh: null,
+    velocitySource: null,
+    rangeRateMps: null,
     receivedAt: t,
   };
 }

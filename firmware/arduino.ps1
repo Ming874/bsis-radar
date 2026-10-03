@@ -113,6 +113,9 @@ switch ($Action) {
       (Join-Path $tests 'host_tests.cpp') `
       (Join-Path $src 'core\DetectionConfig.cpp') `
       (Join-Path $src 'core\ThreatTracker.cpp') `
+      (Join-Path $src 'core\RangeKalman.cpp') `
+      (Join-Path $src 'core\RangeRateWindow.cpp') `
+      (Join-Path $src 'core\VelocityCheck.cpp') `
       (Join-Path $src 'drivers\C4001Protocol.cpp') `
       (Join-Path $src 'comm\CommandParser.cpp') `
       (Join-Path $src 'comm\Telemetry.cpp') `

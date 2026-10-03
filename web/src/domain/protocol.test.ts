@@ -4,7 +4,7 @@ import type { DeviceConfig } from './types';
 
 describe('parseLine：遙測', () => {
   it('解析完整的一行（與韌體輸出相同）', () => {
-    const r = parseLine('R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35');
+    const r = parseLine('R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35 VS=2 RR=6.11');
     expect(r.kind).toBe('telemetry');
     if (r.kind !== 'telemetry') return;
     expect(r.telemetry).toEqual({
@@ -20,7 +20,26 @@ describe('parseLine：遙測', () => {
       energy: 52000,
       uptimeS: 35,
       ownSpeedKmh: null,
+      velocitySource: 'doppler',
+      rangeRateMps: 6.11,
     });
+  });
+
+  it('速度交叉核對欄位：VS 對照、RR 可省略、舊韌體沒有 VS', () => {
+    const codes = ['none', 'checking', 'doppler', 'unfolded', 'rangeRate', 'signFlip'] as const;
+    codes.forEach((code, i) => {
+      const r = parseLine(`R=1 L=0 D=-1 VS=${i}`);
+      if (r.kind !== 'telemetry') throw new Error('not telemetry');
+      expect(r.telemetry.velocitySource).toBe(code);
+      expect(r.telemetry.rangeRateMps).toBeNull();
+    });
+    const old = parseLine('R=1 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=0 RD=-1.00 RV=0.00 E=0 T=7');
+    if (old.kind !== 'telemetry') throw new Error('not telemetry');
+    expect(old.telemetry.velocitySource).toBeNull();
+    const bad = parseLine('R=1 L=0 VS=9 RR=-3.5');
+    if (bad.kind !== 'telemetry') throw new Error('not telemetry');
+    expect(bad.telemetry.velocitySource).toBeNull();
+    expect(bad.telemetry.rangeRateMps).toBe(-3.5);
   });
 
   it('沒有目標時 -1 變成 null', () => {

@@ -7,7 +7,7 @@
  *   OK saved / ERR <原因>
  * 網頁 → ESP32：GET、TEST、MINSPD、MINE、RANGE、SIGN、DTTC、DDIST、HOLD、CONFIRM、DEFAULTS、REBOOT
  */
-import type { AlertLevel, DeviceCommand, DeviceConfig, ParsedLine } from './types';
+import type { AlertLevel, DeviceCommand, DeviceConfig, ParsedLine, VelocitySource } from './types';
 
 /** 各參數允許範圍（與韌體 DetectionConfig.h 的 limits 相同） */
 export const COMMAND_LIMITS = {
@@ -61,6 +61,13 @@ function nonNegative(value: number | undefined): number | null {
   return value !== undefined && value >= 0 ? value : null;
 }
 
+const VELOCITY_SOURCES: readonly VelocitySource[] = ['none', 'checking', 'doppler', 'unfolded', 'rangeRate', 'signFlip'];
+
+function toVelocitySource(value: number | undefined): VelocitySource | null {
+  if (value === undefined || !Number.isInteger(value)) return null;
+  return VELOCITY_SOURCES[value] ?? null;
+}
+
 function toLevel(value: number | undefined, warning: boolean): AlertLevel {
   if (value === 2) return 2;
   if (value === 1) return 1;
@@ -93,6 +100,8 @@ function parseTelemetry(text: string): ParsedLine {
       energy: Math.max(0, num(p, 'E') ?? 0),
       uptimeS: Math.max(0, num(p, 'T') ?? 0),
       ownSpeedKmh: num(p, 'S') ?? null,
+      velocitySource: toVelocitySource(num(p, 'VS')),
+      rangeRateMps: num(p, 'RR') ?? null,
     },
   };
 }

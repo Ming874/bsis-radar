@@ -1,7 +1,7 @@
 {
   "name": "radar-a-web",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Radar A 後方來車警示：手機網頁儀表板（Web Bluetooth）",
   "type": "module",
   "engines": {
