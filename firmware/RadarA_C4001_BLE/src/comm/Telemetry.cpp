@@ -44,7 +44,7 @@ size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
 
 size_t formatConfig(const DetectionConfig& c, const char* firmwareVersion, char* out, size_t cap) {
   const int n = snprintf(out, cap,
-                         "CFG TEST=%d MINSPD=%.2f MINE=%lu RANGE=%.1f SIGN=%d DTTC=%.1f DDIST=%.1f HOLD=%u CONFIRM=%u FW=%s\n",
+                         "CFG TEST=%d MINSPD=%.2f MINE=%lu RANGE=%.1f SIGN=%d DTTC=%.1f DDIST=%.1f HOLD=%u CONFIRM=%u RTHR=%u FW=%s\n",
                          c.testMode ? 1 : 0,
                          c.minSpeedMps,
                          static_cast<unsigned long>(c.minEnergy),
@@ -54,6 +54,7 @@ size_t formatConfig(const DetectionConfig& c, const char* firmwareVersion, char*
                          c.dangerDistM,
                          static_cast<unsigned>(c.holdMs),
                          static_cast<unsigned>(c.confirmHits),
+                         static_cast<unsigned>(c.radarThreshold),
                          firmwareVersion);
   return finish(n, cap);
 }

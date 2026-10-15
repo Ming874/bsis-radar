@@ -31,7 +31,7 @@ RadarA_C4001_BLE/
 ├─ RadarA_C4001_BLE.ino   進入點：組裝 RadarApp，設定 CPU 80 MHz、看門狗
 ├─ AppConfig.h            編譯期設定：腳位、雷達設定、藍牙名稱與 UUID、輸出週期、kAllowBleConfig
 └─ src/
-   ├─ core/      純邏輯（可在電腦上測試）：DetectionConfig（9 項參數與範圍）、ThreatTracker（來車判斷）、MedianWindow
+   ├─ core/      純邏輯（可在電腦上測試）：DetectionConfig（10 項參數與範圍）、ThreatTracker（來車判斷）、MedianWindow
    ├─ drivers/   C4001Protocol（解析 $DFDMD 資料框）、C4001Radar（非阻塞狀態機）、StatusLed
    ├─ comm/      BleLink（NUS、依 MTU 分段、指令佇列）、Telemetry（輸出格式）、CommandParser
    ├─ storage/   SettingsStore（NVS 命名空間 radarA）
@@ -46,18 +46,21 @@ RadarA_C4001_BLE/
 Offline → Configuring → Verifying → Online ⇄ Probing
 ```
 
-- 開機時完整設定一次（`sensorStop` → `setRunApp 1` → `setRange 0.3 20.0` → `setThrFactor 30` → `setMicroMotion 0` → `saveConfig` → `sensorStart`），之後斷線只送 `sensorStart`。
+- 開機時完整設定一次（`sensorStop` → `setRunApp 1` → `sensorStop` → `setRange 0.3 20.0` → `setThrFactor <RTHR>` → `setMicroMotion 0` → `saveConfig` → `getRange`、`getThrFactor` 讀回 → `sensorStart`），之後斷線只送 `sensorStart`；網頁改了 `RTHR` 也會重新完整設定。
+- 設定過程中雷達的回覆會印在序列埠：`[Radar A] 雷達讀回 getThrFactor：5.00`；被雷達拒絕的指令會印 `雷達拒絕指令（第 N 步）`。
+- 雷達實測行為（10 Hz、只回報會動的目標、外插資料框、門檻單位）見 [docs/ALGORITHM.md §10](../docs/ALGORITHM.md)。
 - 連續失敗會把重試間隔從 3 秒拉長到 60 秒，避免一直寫快閃記憶體。
 - 超過約 2.5 秒沒有資料就判定離線並自動重連。
 
-### 來車判斷（ThreatTracker，v2.1.0）
+### 來車判斷（ThreatTracker，v2.2.0）
 
 完整說明、公式、參數與參考文獻見 [docs/ALGORITHM.md](../docs/ALGORITHM.md)。
 
+0. **篩掉外插資料框**：C4001 失去目標時會多送一筆速度、能量與上一筆完全相同的資料框，當成「沒偵測到」。
 1. **關聯**：量測距離落在卡爾曼預測的驗證閘門（3σ，1.2～3 m）內才採用；連續 3 筆「彼此一致」的跳值才視為換了目標。
 2. **追蹤**：卡爾曼濾波器（`RangeKalman`，狀態 = 距離、距離變化率）融合距離與都卜勒速度。
 3. **交叉核對**（`VelocityCheck`）：都卜勒速度必須和最近 1 秒的距離變化率（`RangeRateWindow` 最小平方斜率）一致才採用；超過 10 m/s 的折疊會自動還原，`SIGN` 設反會自動反過來並提示，不一致或卡在量測上限就改用距離變化率。
-4. **確認**：正在接近（接近速度 ≥ `MINSPD`，測試模式 0.1 m/s）、能量 ≥ `MINE` 的資料加分、不合格扣分，分數達到 `CONFIRM` 才算來車。
+4. **確認**：正在接近（接近速度 ≥ `MINSPD`，測試模式 0.1 m/s）、能量 ≥ `MINE` 的資料加分、不合格扣分，分數達到 `CONFIRM` 才算來車。能量是追蹤中目標最近 5 筆偵測的中位數（沒偵測到的那幾筆不算）。
 5. **分級**：距離 ≤ `RANGE` 為注意；到達時間 ≤ `DTTC` 或距離 ≤ `DDIST` 為危險。
 6. **保持**：最後一次真正偵測到後，警示再維持 `HOLD` 毫秒。
 
@@ -74,13 +77,13 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 
 ## 設定
 
-- **執行中可調**（存在 NVS，網頁「裝置」頁或指令修改）：`TEST`、`MINSPD`、`MINE`、`RANGE`、`SIGN`、`DTTC`、`DDIST`、`HOLD`、`CONFIRM`，範圍與預設見 [docs/PROTOCOL.md](../docs/PROTOCOL.md)。
-- **編譯期**（`AppConfig.h`）：腳位 16／17、雷達距離 0.3～20 m、雷達門檻 30、藍牙名稱、MTU 247、遙測週期 200 ms。
+- **執行中可調**（存在 NVS，網頁「裝置」頁或指令修改）：`TEST`、`MINSPD`、`MINE`、`RANGE`、`SIGN`、`DTTC`、`DDIST`、`HOLD`、`CONFIRM`、`RTHR`（雷達偵測門檻，預設 5），範圍與預設見 [docs/PROTOCOL.md](../docs/PROTOCOL.md)。
+- **編譯期**（`AppConfig.h`）：腳位 16／17、雷達距離 0.3～20 m、藍牙名稱、MTU 247、遙測週期 200 ms。
 - **安全**：`kAllowBleConfig = false` 時，藍牙只能讀資料，改設定與重開機只能從 USB。
 
 ## 測試
 
-`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯（173 項），涵蓋資料框解析、指令解析與範圍、輸出格式（含最長一行不超過緩衝區）、來車確認／分級／保持、換目標、雜訊與掉資料，以及速度交叉核對的各種情境（都卜勒折疊、飽和、報 0、`SIGN` 設反、加減速、反射點跳動）。
+`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯（188 項），涵蓋資料框解析、指令解析與範圍、輸出格式（含最長一行不超過緩衝區）、來車確認／分級／保持、換目標、雜訊與掉資料、速度交叉核對的各種情境（都卜勒折疊、飽和、報 0、`SIGN` 設反、加減速、反射點跳動），以及 C4001 實測行為（外插資料框、能量中位數）。需要電腦端的 `g++`（例如 MinGW-w64）。
 
 ```powershell
 .\arduino.ps1 test

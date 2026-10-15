@@ -19,17 +19,7 @@ function Chip({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
-export function NumericParamSheet({
-  spec,
-  current,
-  energy,
-  onClose,
-}: {
-  spec: NumericParam;
-  current: number;
-  energy: number;
-  onClose: () => void;
-}) {
+export function NumericParamSheet({ spec, current, onClose }: { spec: NumericParam; current: number; onClose: () => void }) {
   const [draft, setDraft] = useState(current);
   const valid = draft >= spec.min && draft <= spec.max && (spec.decimals > 0 || Number.isInteger(draft));
   const changed = draft !== current;
@@ -74,9 +64,6 @@ export function NumericParamSheet({
         <div className="flex flex-wrap justify-center gap-2">
           <Chip label={`預設 ${spec.format(spec.defaultValue)}`} onClick={() => setDraft(spec.defaultValue)} />
           <Chip label={`目前 ${spec.format(current)}`} onClick={() => setDraft(current)} />
-          {spec.key === 'minEnergy' && energy > 0 && (
-            <Chip label={`目前能量 ×0.8（${Math.round(energy * 0.8).toLocaleString()}）`} onClick={() => setDraft(Math.round(energy * 0.8))} />
-          )}
         </div>
 
         <div className="rounded-card bg-fill p-4">

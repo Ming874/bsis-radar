@@ -19,7 +19,7 @@ const Keyword kKeywords[] = {
     {"SIGN", CommandType::ApproachSign}, {"DTTC", CommandType::DangerTtc},
     {"DDIST", CommandType::DangerDist},  {"HOLD", CommandType::Hold},
     {"CONFIRM", CommandType::Confirm},   {"DEFAULTS", CommandType::Defaults},
-    {"REBOOT", CommandType::Reboot},
+    {"REBOOT", CommandType::Reboot},     {"RTHR", CommandType::RadarThreshold},
 };
 
 bool inRange(double v, double lo, double hi) { return v >= lo && v <= hi; }
@@ -95,6 +95,7 @@ bool isConfigCommand(CommandType type) {
     case CommandType::DangerDist:
     case CommandType::Hold:
     case CommandType::Confirm:
+    case CommandType::RadarThreshold:
     case CommandType::Defaults:
       return true;
     default:
@@ -150,6 +151,10 @@ bool applyCommand(const Command& cmd, DetectionConfig& cfg, const char** error) 
       case CommandType::Confirm:
         if (inRange(v, limits::kConfirmLo, limits::kConfirmHi) && isWhole(v)) next.confirmHits = static_cast<uint8_t>(v);
         else err = "CONFIRM must be an integer 1-6";
+        break;
+      case CommandType::RadarThreshold:
+        if (inRange(v, limits::kRadarThrLo, limits::kRadarThrHi) && isWhole(v)) next.radarThreshold = static_cast<uint8_t>(v);
+        else err = "RTHR must be an integer 1-50";
         break;
       default:
         err = "not a setting";

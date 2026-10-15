@@ -3,6 +3,7 @@
  * @brief  【核心層】後方來車判斷演算法（純邏輯，可在電腦上做單元測試）。
  *
  * 每筆雷達量測的處理流程：
+ *   0. 篩掉 C4001 自己外插的資料框（速度、能量與上一筆完全相同）：和「0 個目標」一樣只扣分
  *   1. 關聯：量測距離與卡爾曼預測相差太多（驗證閘門外）視為跳值；連續跳值代表換了目標，重新追蹤
  *   2. 追蹤：卡爾曼濾波器（狀態 = 距離、距離變化率）融合「距離」與「都卜勒速度」
  *   3. 交叉核對：都卜勒速度必須與「距離變化率（距離的斜率）」一致才採用；
@@ -97,7 +98,8 @@ class ThreatTracker {
   void evaluate(uint32_t nowMs, const DetectionConfig& cfg, bool freshData);
 
   ThreatState               state_;
-  MedianWindow<uint32_t, 5> energyWindow_;
+  RadarMeasurement          prev_;  // 上一筆原始資料（判斷外插資料框）
+  MedianWindow<uint32_t, 5> energyWindow_;  // 追蹤中目標最近 5 筆偵測的能量
   uint32_t                  energyMedian_ = 0;
 
   RangeKalman     kf_;

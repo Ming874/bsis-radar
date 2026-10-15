@@ -13,6 +13,7 @@
  *   DDIST 4        距離 ≤ 此值為危險（m，1 ~ 10）
  *   HOLD 1000      目標消失後警示保持（ms，200 ~ 5000）
  *   CONFIRM 3      累積幾筆才確認是來車（1 ~ 6）
+ *   RTHR 5         C4001 雷達本身的偵測門檻（整數 1 ~ 50，越大越不靈敏；改了會重新設定雷達）
  *   DEFAULTS       恢復預設值
  *   REBOOT         重新開機
  *   HELP           列出指令
@@ -35,6 +36,7 @@ enum class CommandType : uint8_t {
   DangerDist,
   Hold,
   Confirm,
+  RadarThreshold,
   Defaults,
   Reboot,
   Unknown,
@@ -49,7 +51,7 @@ struct Command {
 
 Command parseCommand(const char* text);
 
-// 會修改設定的指令（TEST/MINSPD/MINE/RANGE/SIGN/DTTC/DDIST/HOLD/CONFIRM/DEFAULTS）
+// 會修改設定的指令（TEST/MINSPD/MINE/RANGE/SIGN/DTTC/DDIST/HOLD/CONFIRM/RTHR/DEFAULTS）
 bool isConfigCommand(CommandType type);
 
 // 驗證並套用到 cfg。成功回傳 true；失敗回傳 false，error 指向錯誤說明（cfg 不變）

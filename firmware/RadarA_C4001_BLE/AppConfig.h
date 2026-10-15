@@ -2,14 +2,14 @@
  * @file   AppConfig.h
  * @brief  【應用層】編譯期設定：腳位、雷達設定、藍牙、輸出週期。
  *
- * 執行中可調整的 9 項偵測參數（測試模式、速度/能量門檻、警示距離、危險 TTC…）不在這裡，
+ * 執行中可調整的 10 項偵測參數（測試模式、速度/能量門檻、警示距離、危險 TTC、雷達偵測門檻…）不在這裡，
  * 它們存在 NVS，用網頁「裝置」頁或序列埠指令修改，見 src/core/DetectionConfig.h。
  * 演算法內部參數（卡爾曼濾波、交叉核對閘門）見 src/core/ThreatTracker.h 與 VelocityCheck.h。
  */
 #pragma once
 #include <stdint.h>
 
-#define FW_VERSION "2.1.0"
+#define FW_VERSION "2.2.0"
 
 namespace app {
 
@@ -22,9 +22,9 @@ constexpr uint32_t kRadarBaud    = 9600;    // C4001 固定 9600
 constexpr uint32_t kUsbBaud      = 115200;  // 序列埠監控視窗鮑率
 
 // ---------- 寫進 C4001 的偵測設定 ----------
+// 雷達內部偵測門檻（setThrFactor）改成執行期參數 RTHR（存在 NVS，網頁可調，預設 5），見 DetectionConfig.h
 constexpr float    kRadarMinRangeM  = 0.3f;   // 最近偵測距離
 constexpr float    kRadarMaxRangeM  = 20.0f;  // 最遠偵測距離：比警示距離多 5 m，來車進 15 m 前就先確認
-constexpr uint16_t kRadarThrFactor  = 30;     // 雷達內部偵測門檻（越大越不靈敏，小東西越不會被抓到）
 
 // ---------- 藍牙（Nordic UART Service，一般藍牙序列 App 都認得） ----------
 constexpr const char* kBleName        = "RadarA-ESP32";

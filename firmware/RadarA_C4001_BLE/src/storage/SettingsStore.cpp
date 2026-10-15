@@ -24,6 +24,7 @@ DetectionConfig SettingsStore::load() {
   c.dangerDistM  = prefs_.getFloat("ddist", fallback.dangerDistM);
   c.holdMs       = prefs_.getUShort("hold", fallback.holdMs);
   c.confirmHits  = prefs_.getUChar("confirm", fallback.confirmHits);
+  c.radarThreshold = prefs_.getUChar("rthr", fallback.radarThreshold);  // 2.2.0 新增：舊資料沒有這個鍵 → 預設值
   return c.isValid() ? c : fallback;
 }
 
@@ -39,6 +40,7 @@ bool SettingsStore::save(const DetectionConfig& c) {
   ok &= prefs_.putFloat("ddist", c.dangerDistM) > 0;
   ok &= prefs_.putUShort("hold", c.holdMs) > 0;
   ok &= prefs_.putUChar("confirm", c.confirmHits) > 0;
+  ok &= prefs_.putUChar("rthr", c.radarThreshold) > 0;
   ok &= prefs_.putUChar("ver", kSchemaVersion) > 0;  // 最後寫版本：中途斷電下次會改用預設值
   return ok;
 }

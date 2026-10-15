@@ -1,7 +1,7 @@
 /*!
  * @file    RadarA_C4001_BLE.ino
  * @brief   Radar A：自行車後方來車偵測（DFRobot C4001 25m，UART）＋ 藍牙 BLE 輸出
- * @version 2.0.0
+ * @version 2.2.0
  *
  * 程式架構（上層呼叫下層，下層不知道上層）：
  *   應用層  RadarA_C4001_BLE.ino     只負責接線與啟動
@@ -37,8 +37,7 @@ static_assert(app::kRadarMaxRangeM >= tuning::kMaxTrackRangeM, "雷達最遠偵�
 static RadarApp radarApp({
     Serial2,  // 雷達 UART
     Serial,   // USB 序列埠
-    {app::kPinRadarRx, app::kPinRadarTx, app::kRadarBaud, app::kRadarMinRangeM, app::kRadarMaxRangeM,
-     app::kRadarThrFactor},
+    {app::kPinRadarRx, app::kPinRadarTx, app::kRadarBaud, app::kRadarMinRangeM, app::kRadarMaxRangeM},
     {app::kBleName, app::kNusServiceUuid, app::kNusRxUuid, app::kNusTxUuid, app::kBleMtu},
     app::kPinStatusLed,
     app::kTelemetryPeriodMs,

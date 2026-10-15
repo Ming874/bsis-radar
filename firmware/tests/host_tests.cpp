@@ -39,12 +39,15 @@ static C4001FrameType feedAll(C4001FrameParser& p, const char* s, RadarMeasureme
   return last;
 }
 
+// 實際的 C4001 每一筆能量都不同；速度與能量都和上一筆相同的資料框是雷達自己外插的，演算法不算它。
+// 所以模擬資料的能量每筆加一點變化（0～6，對能量門檻沒有影響）
 static RadarMeasurement target(float range, float speed, uint32_t energy) {
+  static uint32_t jitter = 0;
   RadarMeasurement m;
   m.targets  = 1;
   m.rangeM   = range;
   m.speedMps = speed;
-  m.energy   = energy;
+  m.energy   = energy + (jitter++ % 7);
   return m;
 }
 
@@ -146,9 +149,10 @@ static void testTracker() {
     CHECK(r.maxLevel == AlertLevel::Danger);
     CHECK(r.firstCautionM <= 15.0f && r.firstCautionM >= 13.5f);
   }
-  {  // 機車 10 m/s（C4001 測速上限）：15 m 時 TTC 剛好 1.5 s → 一進警示範圍就是「危險」
+  {  // 機車 10 m/s（C4001 測速上限）：進入 15 m 警示範圍時 TTC 已小於 1.5 s → 一進警示範圍就是「危險」
+     // 起點 20.05 m：避開「15.00 m 時 TTC 剛好 1.5 s」的浮點臨界值，結果才不會因編譯器不同而改變
     ThreatTracker t;
-    const RunResult r = runApproach(t, road, 20.0f, -10.0f, 40000, 100, 2500);
+    const RunResult r = runApproach(t, road, 20.05f, -10.0f, 40000, 100, 2500);
     CHECK(r.maxLevel == AlertLevel::Danger);
     CHECK(r.firstWarnM <= 15.0f && r.firstWarnM >= 14.0f);
     CHECK(r.firstDangerM == r.firstWarnM);
@@ -277,6 +281,65 @@ static void testTracker() {
       if (t2.state().level > r.maxLevel) r.maxLevel = t2.state().level;
     }
     CHECK(r.maxLevel == AlertLevel::Danger);
+  }
+}
+
+// ------------------------------------------------------------ C4001 實測行為（2026-10 用 USB 直通實測）
+// 模擬「每 1.5 秒出現一次、各 2 筆」的目標：第 2 筆是雷達外插（extrapolated = true）或真的第二次偵測
+static AlertLevel runBlips(const DetectionConfig& cfg, bool extrapolated) {
+  ThreatTracker    t;
+  AlertLevel       maxLevel = AlertLevel::Safe;
+  RadarMeasurement none;
+  for (uint32_t cycle = 0; cycle < 6; cycle++) {
+    const uint32_t   t0    = 1000 + cycle * 1500;
+    RadarMeasurement first = target(3.18f, -3.0f, 300);
+    RadarMeasurement second;
+    if (extrapolated) {  // 雷達外插：速度、能量與上一筆完全相同，距離 = 上一筆 + 速度 × 0.1 s
+      second        = first;
+      second.rangeM = first.rangeM + first.speedMps * 0.1f;
+    } else {
+      second = target(2.88f, -3.0f, 300);
+    }
+    for (uint32_t i = 0; i < 15; i++) {
+      const uint32_t now = t0 + i * 100;
+      t.onMeasurement(i == 0 ? first : (i == 1 ? second : none), now, cfg);
+      t.update(now, cfg);
+      if (t.state().level > maxLevel) maxLevel = t.state().level;
+    }
+  }
+  return maxLevel;
+}
+
+static void testC4001Behaviour() {
+  printf("[C4001 實測行為]\n");
+  {  // 室內 3.2 m 的風扇：每 1.5 秒「1 筆真的 + 1 筆外插」。外插那筆不算偵測，CONFIRM=2 也不誤報
+    DetectionConfig test = DetectionConfig::defaults();  // 測試模式（接近速度門檻 0.1 m/s）
+    test.confirmHits     = 2;
+    CHECK(runBlips(test, true) == AlertLevel::Safe);
+    CHECK(runBlips(test, false) != AlertLevel::Safe);  // 對照：真的連續 2 筆偵測就會確認
+  }
+  {  // 能量門檻 + 目標剛出現：前面「沒目標」的筆數不能把能量中位數拉成 0（舊版要多等 2 筆才確認）
+    DetectionConfig cfg = roadConfig();
+    cfg.minEnergy       = 30000;
+    ThreatTracker    t;
+    RadarMeasurement none;
+    for (uint32_t i = 0; i < 5; i++) t.onMeasurement(none, 1000 + i * 100, cfg);
+    for (uint32_t i = 0; i < 3; i++) t.onMeasurement(target(12.0f - 0.7f * i, -7.0f, 50000), 1500 + i * 100, cfg);
+    CHECK(t.state().warning());  // 第 3 筆（CONFIRM=3）就確認
+    CHECK(t.energyMedian() >= 50000);
+    for (uint32_t ms = 100; ms <= 1000; ms += 100) {  // 目標消失、追蹤結束：能量回到 0，網頁不會一直顯示舊值
+      t.onMeasurement(none, 1700 + ms, cfg);
+      t.update(1700 + ms, cfg);
+    }
+    CHECK(t.energyMedian() == 0);
+  }
+  {  // 能量只算追蹤中的目標：中間夾著幾筆別處的強反射（被關聯閘門擋掉、彼此不一致），不影響這個目標的能量
+    DetectionConfig cfg = roadConfig();
+    ThreatTracker   t;
+    for (uint32_t i = 0; i < 6; i++) t.onMeasurement(target(12.0f - 0.3f * i, -3.0f, 2000), 1000 + i * 100, cfg);
+    const float jumps[] = {3.0f, 17.0f, 4.0f};
+    for (uint32_t i = 0; i < 3; i++) t.onMeasurement(target(jumps[i], -3.0f, 900000), 1600 + i * 100, cfg);
+    CHECK(t.energyMedian() < 10000);
   }
 }
 
@@ -547,15 +610,26 @@ static void testCommands() {
   CHECK(!applyCommand(parseCommand("HOLD 1500.5"), c, &err));
   CHECK(applyCommand(parseCommand("CONFIRM 2"), c, &err) && c.confirmHits == 2);
   CHECK(!applyCommand(parseCommand("CONFIRM 7"), c, &err));
+  CHECK(isConfigCommand(CommandType::RadarThreshold));
+  CHECK(applyCommand(parseCommand("rthr 10"), c, &err) && c.radarThreshold == 10);
+  CHECK(applyCommand(parseCommand("RTHR 50"), c, &err) && c.radarThreshold == 50);
+  CHECK(!applyCommand(parseCommand("RTHR 0"), c, &err));
+  CHECK(!applyCommand(parseCommand("RTHR 51"), c, &err));
+  CHECK(!applyCommand(parseCommand("RTHR 5.5"), c, &err));
+  CHECK(c.radarThreshold == 50);  // 失敗時設定不變
 
   CHECK(applyCommand(parseCommand("DEFAULTS"), c, &err));
   CHECK(c.testMode && c.approachSign == -1 && c.minEnergy == 0);
   CHECK(c.holdMs == 1000 && c.confirmHits == 3);
+  CHECK(c.radarThreshold == 5);  // C4001 原廠預設
   CHECK(c.isValid());
 
   DetectionConfig bad = DetectionConfig::defaults();
   bad.minSpeedMps = NAN;
   CHECK(!bad.isValid());
+  DetectionConfig badThr = DetectionConfig::defaults();
+  badThr.radarThreshold  = 0;
+  CHECK(!badThr.isValid());
 }
 
 // ------------------------------------------------------------ 輸出格式
@@ -598,9 +672,10 @@ static void testTelemetry() {
   worst.dangerDistM  = limits::kDangerDistHi;
   worst.holdMs       = limits::kHoldHi;
   worst.confirmHits  = limits::kConfirmHi;
+  worst.radarThreshold = limits::kRadarThrHi;
   char cfgLine[kConfigLineMax];
-  CHECK(formatConfig(worst, "2.1.0", cfgLine, sizeof(cfgLine)) > 0);
-  CHECK(formatConfig(DetectionConfig::defaults(), "2.1.0", cfgLine, sizeof(cfgLine)) > 0);
+  CHECK(formatConfig(worst, "2.2.0", cfgLine, sizeof(cfgLine)) > 0);
+  CHECK(formatConfig(DetectionConfig::defaults(), "2.2.0", cfgLine, sizeof(cfgLine)) > 0);
 
   TelemetrySnapshot big = s;
   big.threat.distanceM  = 20.0f;
@@ -616,14 +691,16 @@ static void testTelemetry() {
   CHECK(formatTelemetry(big, telLine, sizeof(telLine)) > 0);
   CHECK(strstr(telLine, " VS=5 RR=-99.99\n") != nullptr);
 
-  CHECK(formatConfig(DetectionConfig::defaults(), "2.1.0", line, sizeof(line)) > 0);
-  CHECK(strcmp(line, "CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 FW=2.1.0\n") == 0);
+  CHECK(formatConfig(DetectionConfig::defaults(), "2.2.0", line, sizeof(line)) > 0);
+  CHECK(strcmp(line,
+               "CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 FW=2.2.0\n") == 0);
   printf("  %s", line);
 }
 
 int main() {
   testFrameParser();
   testTracker();
+  testC4001Behaviour();
   testEstimators();
   testVelocityCrossCheck();
   testCommands();

@@ -18,26 +18,24 @@ constexpr float kDopplerVar = velocity_tuning::kDopplerSigmaMps * velocity_tunin
 
 void ThreatTracker::reset() {
   state_ = ThreatState();
-  energyWindow_.clear();
-  energyMedian_ = 0;
+  prev_  = RadarMeasurement();
   dropTrack();
   lastWarnMs_ = 0;
   // reportedLevel_ 不清除：等級若從警示變安全，consumeLevelChange() 會回報一次
 }
 
 void ThreatTracker::onMeasurement(const RadarMeasurement& m, uint32_t nowMs, const DetectionConfig& cfg) {
-  if (m.targets == 0) {
-    // C4001 偶爾回報 0 個目標：只扣分，追蹤與速度都保留，TTC 與等級才不會亂跳
-    energyWindow_.push(0);
-    energyMedian_ = energyWindow_.median();
+  // C4001 失去目標時會再送一筆「外插」資料框：速度、能量與上一筆完全相同（同一串文字），距離 = 上一筆 + 速度 × 0.1 s。
+  // 真正的量測每筆能量都不同（實測），所以兩者都相同就不是新的量測，和「0 個目標」一樣處理
+  const bool extrapolated =
+      m.targets > 0 && prev_.targets > 0 && m.speedMps == prev_.speedMps && m.energy == prev_.energy;
+  prev_ = m;
+  if (m.targets == 0 || extrapolated) {
+    // 只扣分，追蹤與速度都保留，TTC 與等級才不會亂跳
     registerMiss();
     evaluate(nowMs, cfg, false);
     return;
   }
-
-  // 能量值跳動很大，用最近 5 筆的中位數判斷物體大小
-  energyWindow_.push(m.energy);
-  energyMedian_ = energyWindow_.median();
 
   bool associated = false;
   if (m.rangeM >= tuning::kMinRangeM && m.rangeM <= tuning::kMaxTrackRangeM) {
@@ -45,6 +43,10 @@ void ThreatTracker::onMeasurement(const RadarMeasurement& m, uint32_t nowMs, con
     const Association a       = associate(m.rangeM, doppler, nowMs);
     associated                = a != Association::Rejected;
     if (associated) {
+      // 能量值跳動很大，用追蹤中目標最近 5 筆偵測的中位數判斷物體大小。
+      // 沒偵測到的那幾筆不能算成 0：否則目標斷斷續續時中位數變 0，再大的車也過不了能量門檻
+      energyWindow_.push(m.energy);
+      energyMedian_ = energyWindow_.median();
       window_.push(nowMs, m.rangeM);
       if (a == Association::Updated) kf_.updateRange(m.rangeM, kRangeVar);  // 新追蹤已用這筆初始化，不重複計入
 
@@ -141,6 +143,7 @@ ThreatTracker::Association ThreatTracker::associate(float rangeM, float dopplerR
 void ThreatTracker::startTrack(float rangeM, float dopplerRate, uint32_t nowMs) {
   kf_.init(rangeM, dopplerRate, kRangeVar, tuning::kInitRateSigma * tuning::kInitRateSigma);
   window_.clear();
+  energyWindow_.clear();  // 新目標的能量重新統計
   velocity_.reset();
   hasRangeRate_     = false;
   outliers_         = 0;
@@ -157,6 +160,8 @@ void ThreatTracker::registerMiss() {
 void ThreatTracker::dropTrack() {
   kf_.clear();
   window_.clear();
+  energyWindow_.clear();
+  energyMedian_ = 0;
   velocity_.reset();
   closing_      = 0.0f;
   hasRangeRate_ = false;

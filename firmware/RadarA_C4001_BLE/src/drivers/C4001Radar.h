@@ -14,8 +14,11 @@
  *      └────────────────────┴───────────────┴──────────────┘
  *
  * 保護雷達的 flash：完整設定（含 saveConfig）每次開機只做一次；之後斷線重連
- * 只送 sensorStart 再確認輸出。只有雷達模式真的不對才重新完整設定，
+ * 只送 sensorStart 再確認輸出。只有雷達模式不對、或偵測門檻（RTHR）改變時才重新完整設定，
  * 而且連續失敗時重試間隔加倍（3 → 6 → 12 … 最多 60 秒）。
+ *
+ * 設定過程中雷達對每個指令的文字回覆（Response … / Error）會印在序列埠：開機時可以確認
+ * 雷達實際存下的距離範圍與門檻（getRange、getThrFactor）。
  */
 #pragma once
 #include <Arduino.h>
@@ -38,10 +41,13 @@ class C4001Radar {
     uint32_t baud;       // C4001 固定 9600
     float    minRangeM;  // 寫進雷達的最近偵測距離
     float    maxRangeM;  // 寫進雷達的最遠偵測距離
-    uint16_t thrFactor;  // 雷達內部偵測門檻（越大越不靈敏）
   };
 
   C4001Radar(HardwareSerial& port, const Settings& settings, Print& log);
+
+  // 雷達內部偵測門檻（setThrFactor，越大越不靈敏，原廠預設 5）。
+  // begin() 之前呼叫只記下來；運作中改值會重新完整設定雷達（約 4 秒內不輸出資料）
+  void setThrFactor(uint16_t thrFactor, uint32_t nowMs);
 
   void begin(uint32_t nowMs);
 
@@ -69,6 +75,8 @@ class C4001Radar {
   void pumpBytes(uint32_t nowMs);
   void handleFrame(C4001FrameType type, const RadarMeasurement& m, uint32_t nowMs);
   void rememberEcho(char c);
+  void rememberText(char c);
+  void handleTextLine();
 
   void startConfiguring(uint32_t nowMs);
   void runConfigStep(uint32_t nowMs);
@@ -88,13 +96,16 @@ class C4001Radar {
   uint32_t stateSinceMs_ = 0;
 
   // 設定流程：完整設定（開機一次）與快速重連兩套步驟
-  static constexpr size_t kFullStepCount = 13;
+  static constexpr size_t kFullStepCount = 10;
   Step        fullPlan_[kFullStepCount];
   Step        quickPlan_[1];
   const Step* plan_         = nullptr;
   size_t      planLength_   = 0;
   char        rangeCmd_[32] = {};
   char        thrCmd_[24]   = {};
+  uint16_t    thrFactor_    = 5;
+  bool        begun_        = false;
+  uint8_t     configErrors_ = 0;  // 這次設定被雷達回覆 Error 的指令數
   size_t      stepIndex_    = 0;
   uint8_t     stepTries_    = 0;
   uint32_t    stepSentMs_   = 0;
@@ -124,6 +135,9 @@ class C4001Radar {
   char     echo_[24]     = {};  // 最近收到的文字（偵測 sensorStop 回覆用）
   size_t   echoLen_      = 0;
   bool     stopEchoSeen_ = false;
+  char     text_[48]     = {};  // 資料框以外、正在組的一行文字（指令回覆）
+  size_t   textLen_      = 0;
+  bool     textInFrame_  = false;
 
   uint32_t bytesReceived_    = 0;
   uint32_t lastByteMs_       = 0;

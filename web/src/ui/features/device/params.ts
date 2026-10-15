@@ -2,12 +2,20 @@
  * 【裝置】ESP32 偵測參數的統一定義：名稱、單位、範圍、步進、顯示方式、對應指令、說明。
  * 列表與編輯面板都由這份定義產生，新增參數只要改這裡。
  */
-import { COMMAND_LIMITS, DEFAULT_DEVICE_CONFIG } from '../../../domain/protocol';
+import { COMMAND_LIMITS, DEFAULT_DEVICE_CONFIG, DEFAULT_RADAR_THRESHOLD } from '../../../domain/protocol';
 import type { DeviceCommand } from '../../../domain/types';
 import { mpsToKmh } from '../../../domain/units';
 import { PARAM_HELP, type HelpText } from '../../content/help';
 
-export type NumericKey = 'minSpeedMps' | 'minEnergy' | 'warnRangeM' | 'dangerTtcS' | 'dangerDistM' | 'holdMs' | 'confirmHits';
+export type NumericKey =
+  | 'minSpeedMps'
+  | 'minEnergy'
+  | 'warnRangeM'
+  | 'dangerTtcS'
+  | 'dangerDistM'
+  | 'holdMs'
+  | 'confirmHits'
+  | 'radarThreshold';
 export type ParamKey = NumericKey | 'approachSign';
 
 export interface NumericParam {
@@ -57,7 +65,8 @@ export const NUMERIC_PARAMS: Record<NumericKey, NumericParam> = {
     decimals: 0,
     slider: false,
     format: (v) => (v === 0 ? '不過濾' : v.toLocaleString()),
-    hint: (v) => (v === 0 ? '目前不過濾能量' : `能量低於 ${v.toLocaleString()} 的目標不算來車`),
+    hint: (v) =>
+      v === 0 ? '目前不過濾能量（建議）' : `能量低於 ${v.toLocaleString()} 的目標不算來車；能量隨距離急遽變小，遠處的車也會被擋掉`,
     toCommand: (v) => ({ type: 'minEnergy', value: v }),
     defaultValue: D.minEnergy,
   },
@@ -128,6 +137,21 @@ export const NUMERIC_PARAMS: Record<NumericKey, NumericParam> = {
     toCommand: (v) => ({ type: 'hold', ms: v }),
     defaultValue: D.holdMs,
   },
+  radarThreshold: {
+    key: 'radarThreshold',
+    label: '雷達偵測門檻',
+    help: PARAM_HELP.radarThreshold,
+    unit: '',
+    ...L.radarThreshold,
+    step: 1,
+    decimals: 0,
+    slider: true,
+    format: (v) => (v === DEFAULT_RADAR_THRESHOLD ? `${v}（原廠預設）` : String(v)),
+    hint: (v) =>
+      `${v < DEFAULT_RADAR_THRESHOLD ? '比原廠更靈敏' : v === DEFAULT_RADAR_THRESHOLD ? '原廠預設' : '比原廠不靈敏'}；套用後雷達重新設定約 4 秒`,
+    toCommand: (v) => ({ type: 'radarThreshold', value: v }),
+    defaultValue: DEFAULT_RADAR_THRESHOLD,
+  },
 };
 
 export const SIGN_OPTIONS: Array<{ value: -1 | 0 | 1; label: string; description: string }> = [
@@ -139,6 +163,7 @@ export const SIGN_OPTIONS: Array<{ value: -1 | 0 | 1; label: string; description
 export const signLabel = (s: -1 | 0 | 1) => SIGN_OPTIONS.find((o) => o.value === s)?.label ?? String(s);
 
 export const PARAM_GROUPS: Array<{ title: string; footer: string; keys: ParamKey[] }> = [
+  { title: '雷達', footer: '寫進 C4001 本身：雷達看得到多小、多遠的目標。改完約 4 秒內不偵測。', keys: ['radarThreshold'] },
   { title: '偵測條件', footer: '什麼樣的目標算是「來車」。', keys: ['minSpeedMps', 'minEnergy', 'approachSign'] },
   { title: '警示等級', footer: '什麼時候開始提醒、什麼時候算危險。', keys: ['warnRangeM', 'dangerTtcS', 'dangerDistM'] },
   { title: '穩定性', footer: '過濾雜訊與警示保持。', keys: ['confirmHits', 'holdMs'] },

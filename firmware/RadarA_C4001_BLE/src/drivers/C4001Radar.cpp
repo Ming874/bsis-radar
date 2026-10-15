@@ -29,25 +29,37 @@ constexpr const char* kSaveCommand  = "saveConfig";
 C4001Radar::C4001Radar(HardwareSerial& port, const Settings& settings, Print& log)
     : port_(port), settings_(settings), log_(log) {
   snprintf(rangeCmd_, sizeof(rangeCmd_), "setRange %.1f %.1f", settings_.minRangeM, settings_.maxRangeM);
-  snprintf(thrCmd_, sizeof(thrCmd_), "setThrFactor %u", static_cast<unsigned>(settings_.thrFactor));
+  snprintf(thrCmd_, sizeof(thrCmd_), "setThrFactor %u", static_cast<unsigned>(thrFactor_));
 
-  // 與 DFRobot 函式庫 setSensorMode() / setDetectThres() / setFrettingDetection()
-  // 送出的指令字串、順序、間隔相同（每組：停止 → 設定 → 存檔 → 啟動）
+  // 指令字串與 DFRobot 函式庫 setSensorMode() / setDetectThres() / setFrettingDetection() 相同。
+  // 資料手冊：設定必須在停止狀態下送，存檔後啟動才生效；setRunApp 收到後雷達會直接以新模式開始運作，
+  // 所以切換模式後要再停止一次（函式庫在 setRunApp 後直接 saveConfig，實測雷達回 Error）
   const Step full[kFullStepCount] = {
-      {kStopCommand, kStopWaitMs, true},  {"setRunApp 1", 100, false},      {kSaveCommand, 500, false},
-      {kStartCommand, 100, false},                                          // ① 切到測速測距模式
+      {kStopCommand, kStopWaitMs, true},  {"setRunApp 1", 300, false},      // ① 切到測速測距模式
       {kStopCommand, kStopWaitMs, true},  {rangeCmd_, 200, false},          {thrCmd_, 100, false},
-      {kSaveCommand, 100, false},         {kStartCommand, 100, false},      // ② 偵測範圍與門檻
-      {kStopCommand, kStopWaitMs, true},  {"setMicroMotion 0", 100, false}, {kSaveCommand, 100, false},
-      {kStartCommand, 100, false},                                          // ③ 關閉微動偵測，減少靜物誤報
+      {"setMicroMotion 0", 100, false},   {kSaveCommand, 500, false},       // ② 範圍、門檻、關閉微動偵測，連同模式一起存檔
+      {"getRange", 150, false},           {"getThrFactor", 150, false},     // ③ 讀回雷達實際存下的值
+      {kStartCommand, 100, false},
   };
   memcpy(fullPlan_, full, sizeof(fullPlan_));
   quickPlan_[0] = {kStartCommand, 100, false};  // 快速重連：設定已存在雷達裡，只要確保它在量測
 }
 
+void C4001Radar::setThrFactor(uint16_t thrFactor, uint32_t nowMs) {
+  if (begun_ && thrFactor == thrFactor_) return;
+  thrFactor_ = thrFactor;
+  snprintf(thrCmd_, sizeof(thrCmd_), "setThrFactor %u", static_cast<unsigned>(thrFactor_));
+  if (!begun_) return;  // begin() 會做完整設定
+
+  needFullConfig_ = true;
+  log_.printf("[Radar A] 偵測門檻改為 %u，重新設定雷達\n", static_cast<unsigned>(thrFactor_));
+  if (state_ != State::Offline) startConfiguring(nowMs);  // 離線中：下一次重試時一起寫入
+}
+
 void C4001Radar::begin(uint32_t nowMs) {
   port_.setRxBufferSize(512);  // 必須在 begin() 之前設定
   port_.begin(settings_.baud, SERIAL_8N1, settings_.rxPin, settings_.txPin);
+  begun_ = true;
   startConfiguring(nowMs);
 }
 
@@ -135,6 +147,7 @@ void C4001Radar::pumpBytes(uint32_t nowMs) {
     bytesReceived_++;
     lastByteMs_ = nowMs;
     rememberEcho(c);
+    rememberText(c);
 
     RadarMeasurement m;
     const C4001FrameType type = parser_.feed(c, m);
@@ -183,6 +196,42 @@ void C4001Radar::rememberEcho(char c) {
   }
 }
 
+// 把資料框（$…*）以外的文字組成一行一行，交給 handleTextLine()
+void C4001Radar::rememberText(char c) {
+  if (c == '$') {
+    textInFrame_ = true;
+    textLen_     = 0;
+    return;
+  }
+  if (textInFrame_) {
+    if (c == '*' || c == '\r' || c == '\n') textInFrame_ = false;
+    return;
+  }
+  if (c == '\r' || c == '\n') {
+    text_[textLen_] = '\0';
+    if (textLen_ > 0) handleTextLine();
+    textLen_ = 0;
+    return;
+  }
+  if (textLen_ < sizeof(text_) - 1) text_[textLen_++] = c;
+}
+
+// 設定過程中：印出讀回的數值（Response …），記下被拒絕的指令（Error）。
+// 雷達約 50 ms 內回覆，每一步至少隔 100 ms，所以回覆一定屬於目前這一步的指令
+void C4001Radar::handleTextLine() {
+  if (state_ != State::Configuring || plan_ == nullptr || stepIndex_ >= planLength_) return;
+  const char* command = plan_[stepIndex_].command;
+  if (strncmp(text_, "Response", 8) == 0) {
+    const char* value = text_ + 8;
+    while (*value == ' ') value++;
+    log_.printf("[Radar A] 雷達讀回 %s：%s\n", command, value);
+  } else if (strncmp(text_, "Error", 5) == 0 && strcmp(command, kStopCommand) != 0 &&
+             strcmp(command, kStartCommand) != 0) {
+    if (configErrors_ < 255) configErrors_++;
+    log_.printf("[Radar A] 雷達拒絕指令（第 %u 步）：%s\n", static_cast<unsigned>(stepIndex_ + 1), command);
+  }
+}
+
 void C4001Radar::startConfiguring(uint32_t nowMs) {
   initAttempts_++;
   fullAttempt_      = needFullConfig_;
@@ -195,6 +244,7 @@ void C4001Radar::startConfiguring(uint32_t nowMs) {
   clearQueue();
   stepIndex_          = 0;
   stepTries_          = 0;
+  configErrors_       = 0;
   bytesAtConfigStart_ = bytesReceived_;
   parser_.reset();
   enterState(State::Configuring, nowMs);
@@ -239,7 +289,10 @@ void C4001Radar::runConfigStep(uint32_t nowMs) {
     return;
   }
 
-  if (fullAttempt_) log_.printf("[Radar A] 設定完成：%s，%s，關閉微動偵測\n", rangeCmd_, thrCmd_);
+  if (fullAttempt_) {
+    log_.printf("[Radar A] 設定完成：%s，%s，關閉微動偵測%s\n", rangeCmd_, thrCmd_,
+                configErrors_ > 0 ? "（有指令被雷達拒絕，見上方訊息）" : "");
+  }
   enterState(State::Verifying, nowMs);  // 確認雷達真的有在輸出
 }
 

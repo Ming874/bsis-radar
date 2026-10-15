@@ -16,6 +16,7 @@ const ACK_TEXT: Array<[RegExp, string]> = [
   [/^DDIST must be/i, '危險距離必須介於 1 ～ 10 公尺'],
   [/^HOLD must be/i, '警示保持時間必須是 200 ～ 5000 的整數（毫秒）'],
   [/^CONFIRM must be/i, '確認筆數必須是 1 ～ 6 的整數'],
+  [/^RTHR must be/i, '雷達偵測門檻必須是 1 ～ 50 的整數'],
   [/^missing or bad value/i, '指令缺少數值或格式不正確'],
   [/^unknown command/i, 'ESP32 不認得這個指令，輸入 HELP 可查看可用指令'],
   [/^settings over Bluetooth are disabled/i, 'ESP32 已關閉「藍牙修改設定」，請改用 USB 序列埠修改'],

@@ -1,5 +1,5 @@
 /**
- * 【裝置】ESP32 與雷達：即時原始資料、模式切換、9 項偵測參數（點一下編輯）、工具。
+ * 【裝置】ESP32 與雷達：即時原始資料、模式切換、10 項偵測參數（點一下編輯）、工具。
  * 電腦版分兩欄：左邊資料與工具、右邊偵測參數。
  */
 import { useCallback, useState, type ReactNode } from 'react';
@@ -27,6 +27,7 @@ import {
   HistoryIcon,
   ListRow,
   PageHeader,
+  RadarIcon,
   RefreshIcon,
   RulerIcon,
   Section,
@@ -51,6 +52,7 @@ const PARAM_ICON: Record<ParamKey, { icon: ReactNode; tone: Tone }> = {
   dangerDistM: { icon: <AlertIcon />, tone: 'danger' },
   confirmHits: { icon: <CheckCircleIcon />, tone: 'safe' },
   holdMs: { icon: <HistoryIcon />, tone: 'safe' },
+  radarThreshold: { icon: <RadarIcon />, tone: 'accent' },
 };
 
 type SheetState = { kind: 'param'; key: ParamKey } | { kind: 'console' } | { kind: 'guide' } | { kind: 'defaults' } | { kind: 'reboot' } | null;
@@ -145,11 +147,10 @@ function SignFlipNotice({ sign }: { sign: -1 | 0 | 1 }) {
 }
 
 export function DevicePage() {
-  const { status, config, energy, deviceName } = useRadar(
+  const { status, config, deviceName } = useRadar(
     useShallow((s) => ({
       status: s.connection.status,
       config: s.config,
-      energy: s.telemetry?.energy ?? 0,
       deviceName: s.connection.deviceName,
     })),
   );
@@ -162,7 +163,7 @@ export function DevicePage() {
       <div className="space-y-4">
         <PageHeader title="裝置" subtitle="ESP32 與雷達的偵測參數" />
         <Section>
-          <EmptyState icon={<CpuIcon />} title="尚未連線" description="連線後可以即時查看雷達資料，並調整 ESP32 的 9 項偵測參數。">
+          <EmptyState icon={<CpuIcon />} title="尚未連線" description="連線後可以即時查看雷達資料，並調整 ESP32 的 10 項偵測參數。">
             {capabilities.bluetooth ? (
               <Button variant="primary" size="lg" block onClick={() => void actions.connectBluetooth()}>
                 <BluetoothIcon />
@@ -178,6 +179,8 @@ export function DevicePage() {
   }
 
   const subtitle = `${deviceName ?? 'ESP32'}・韌體 ${config?.firmware ?? '讀取中…'}`;
+  // 正在編輯的數值參數目前的值（舊韌體沒有的參數是 null，不開編輯面板）
+  const sheetValue = sheet?.kind === 'param' && sheet.key !== 'approachSign' && config ? config[sheet.key] : null;
 
   const tools = (
     <Section title="工具">
@@ -244,6 +247,8 @@ export function DevicePage() {
                     );
                   }
                   const spec = NUMERIC_PARAMS[key];
+                  const value = config[key];
+                  if (value === null) return null; // 舊韌體沒有這個參數（例如 2.2 以前的雷達偵測門檻）
                   const testOverride = key === 'minSpeedMps' && config.testMode;
                   return (
                     <ListRow
@@ -252,7 +257,7 @@ export function DevicePage() {
                       tone={tone}
                       title={spec.label}
                       description={testOverride ? '測試模式中暫時使用 0.1 m/s' : undefined}
-                      value={spec.format(config[key])}
+                      value={spec.format(value)}
                       onClick={() => setSheet({ kind: 'param', key })}
                     />
                   );
@@ -270,15 +275,15 @@ export function DevicePage() {
       </div>
 
       {sheet?.kind === 'param' && config && sheet.key === 'approachSign' && <SignSheet current={config.approachSign} onClose={close} />}
-      {sheet?.kind === 'param' && config && sheet.key !== 'approachSign' && (
-        <NumericParamSheet spec={NUMERIC_PARAMS[sheet.key]} current={config[sheet.key]} energy={energy} onClose={close} />
+      {sheet?.kind === 'param' && sheet.key !== 'approachSign' && sheetValue !== null && (
+        <NumericParamSheet spec={NUMERIC_PARAMS[sheet.key]} current={sheetValue} onClose={close} />
       )}
       {sheet?.kind === 'console' && <ConsoleSheet onClose={close} />}
       {sheet?.kind === 'guide' && <GuideSheet onClose={close} />}
       {sheet?.kind === 'defaults' && (
         <ConfirmSheet
           title="全部恢復預設值？"
-          message={`ESP32 的 9 項偵測參數會改回預設：室內測試模式開、接近速度 ${DEFAULT_DEVICE_CONFIG.minSpeedMps} m/s、警示距離 ${DEFAULT_DEVICE_CONFIG.warnRangeM} m、危險到達時間 ${DEFAULT_DEVICE_CONFIG.dangerTtcS} 秒等。`}
+          message={`ESP32 的 10 項偵測參數會改回預設：室內測試模式開、接近速度 ${DEFAULT_DEVICE_CONFIG.minSpeedMps} m/s、警示距離 ${DEFAULT_DEVICE_CONFIG.warnRangeM} m、危險到達時間 ${DEFAULT_DEVICE_CONFIG.dangerTtcS} 秒等。`}
           confirmLabel="恢復預設"
           destructive
           onConfirm={() => void send({ type: 'defaults' })}

@@ -3,9 +3,9 @@
  *
  * ESP32 → 網頁（每行以 '\n' 結尾）：
  *   R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35
- *   CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 FW=2.0.0
+ *   CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 FW=2.2.0
  *   OK saved / ERR <原因>
- * 網頁 → ESP32：GET、TEST、MINSPD、MINE、RANGE、SIGN、DTTC、DDIST、HOLD、CONFIRM、DEFAULTS、REBOOT
+ * 網頁 → ESP32：GET、TEST、MINSPD、MINE、RANGE、SIGN、DTTC、DDIST、HOLD、CONFIRM、RTHR、DEFAULTS、REBOOT
  */
 import type { AlertLevel, DeviceCommand, DeviceConfig, ParsedLine, VelocitySource } from './types';
 
@@ -18,7 +18,11 @@ export const COMMAND_LIMITS = {
   dangerDistM: { min: 1, max: 10 },
   holdMs: { min: 200, max: 5000 },
   confirmHits: { min: 1, max: 6 },
+  radarThreshold: { min: 1, max: 50 },
 } as const;
+
+/** C4001 的偵測門檻原廠預設值（韌體 2.2 起的預設；舊韌體固定用 30） */
+export const DEFAULT_RADAR_THRESHOLD = 5;
 
 /** 韌體預設值（DetectionConfig::defaults） */
 export const DEFAULT_DEVICE_CONFIG: Omit<DeviceConfig, 'firmware'> = {
@@ -31,6 +35,7 @@ export const DEFAULT_DEVICE_CONFIG: Omit<DeviceConfig, 'firmware'> = {
   dangerDistM: 4,
   holdMs: 1000,
   confirmHits: 3,
+  radarThreshold: DEFAULT_RADAR_THRESHOLD,
 };
 
 /**
@@ -132,6 +137,8 @@ function parseConfig(text: string): ParsedLine {
       dangerDistM: num(p, 'DDIST') ?? d.dangerDistM,
       holdMs: num(p, 'HOLD') ?? d.holdMs,
       confirmHits: num(p, 'CONFIRM') ?? d.confirmHits,
+      // 2.2 以前的韌體沒有 RTHR（雷達門檻寫死、不能調），不能用預設值假裝
+      radarThreshold: num(p, 'RTHR') ?? null,
       firmware: p.get('FW') ?? '?',
     },
   };
@@ -203,6 +210,10 @@ export function buildCommand(cmd: DeviceCommand): string {
       assertRange(cmd.hits, L.confirmHits, '確認筆數');
       assertInteger(cmd.hits, '確認筆數');
       return `CONFIRM ${cmd.hits}`;
+    case 'radarThreshold':
+      assertRange(cmd.value, L.radarThreshold, '雷達偵測門檻');
+      assertInteger(cmd.value, '雷達偵測門檻');
+      return `RTHR ${cmd.value}`;
   }
 }
 
@@ -218,5 +229,8 @@ export function diffConfig(current: DeviceConfig, next: DeviceConfig): DeviceCom
   if (current.dangerDistM !== next.dangerDistM) cmds.push({ type: 'dangerDist', meters: next.dangerDistM });
   if (current.holdMs !== next.holdMs) cmds.push({ type: 'hold', ms: next.holdMs });
   if (current.confirmHits !== next.confirmHits) cmds.push({ type: 'confirm', hits: next.confirmHits });
+  if (next.radarThreshold !== null && current.radarThreshold !== next.radarThreshold) {
+    cmds.push({ type: 'radarThreshold', value: next.radarThreshold });
+  }
   return cmds;
 }

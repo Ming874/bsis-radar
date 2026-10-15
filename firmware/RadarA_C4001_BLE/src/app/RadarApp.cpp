@@ -26,6 +26,7 @@ void RadarApp::begin() {
   ble_.begin(bleConfig_);  // 先開藍牙：雷達還沒接好也能用手機確認 ESP32 有在跑
   console_.printf("[藍牙] 已開始廣播：%s\n", bleConfig_.deviceName);
 
+  radar_.setThrFactor(config_.radarThreshold, millis());  // 雷達門檻存在 NVS（RTHR），開機時寫進雷達
   radar_.begin(millis());
   console_.println("輸入 HELP 查看指令。欄位：狀態 | 原始 目標數/距離/速度/能量 | 追蹤 距離/接近速度/TTC | 等級");
 }
@@ -96,7 +97,7 @@ void RadarApp::handleCommand(const char* text, Channel from) {
     case CommandType::Help:
       reply(from,
             "OK commands: GET, TEST 0|1, MINSPD <m/s>, MINE <int>, RANGE <m>, SIGN -1|0|1, DTTC <s>, DDIST <m>, "
-            "HOLD <ms>, CONFIRM <n>, DEFAULTS, REBOOT\n");
+            "HOLD <ms>, CONFIRM <n>, RTHR <1-50>, DEFAULTS, REBOOT\n");
       return;
     default:
       break;
@@ -121,7 +122,8 @@ void RadarApp::handleCommand(const char* text, Channel from) {
       break;
   }
 
-  const char* error = nullptr;
+  const char*   error       = nullptr;
+  const uint8_t oldRadarThr = config_.radarThreshold;
   if (!applyCommand(cmd, config_, &error)) {
     char line[72];
     snprintf(line, sizeof(line), "ERR %s\n", error);
@@ -133,6 +135,8 @@ void RadarApp::handleCommand(const char* text, Channel from) {
   tracker_.reset();  // 參數改了，舊的追蹤狀態作廢
   reply(from, saved ? "OK saved\n" : "OK applied (flash save failed)\n");
   broadcastConfig();  // 網頁與序列埠都更新成新設定
+  // 雷達門檻要寫進 C4001 本身：重新設定雷達，約 4 秒內不輸出資料（網頁會短暫顯示雷達離線）
+  if (config_.radarThreshold != oldRadarThr) radar_.setThrFactor(config_.radarThreshold, millis());
 }
 
 void RadarApp::reply(Channel to, const char* line) {
