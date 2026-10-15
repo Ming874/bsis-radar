@@ -18,6 +18,8 @@ const TELEMETRY_HEADER = [
   'own_speed_kmh',
   'velocity_source',
   'range_rate_mps',
+  'track_distance_m',
+  'track_closing_mps',
 ];
 
 const cell = (v: number | null | boolean): string => (v === null ? '' : typeof v === 'boolean' ? (v ? '1' : '0') : String(v));
@@ -50,6 +52,8 @@ export class CsvRecorder {
         cell(t.ownSpeedKmh),
         t.velocitySource ?? '',
         cell(t.rangeRateMps),
+        cell(t.trackDistanceM),
+        cell(t.trackClosingMps),
       ].join(','),
     );
   }

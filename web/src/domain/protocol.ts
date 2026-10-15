@@ -2,7 +2,7 @@
  * 【領域層】ESP32 ⇄ 網頁的文字協定（與韌體 src/comm/Telemetry、CommandParser 對應）。
  *
  * ESP32 → 網頁（每行以 '\n' 結尾）：
- *   R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35
+ *   R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35 VS=2 RR=6.11 TD=8.42 TV=6.20
  *   CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 FW=2.2.0
  *   OK saved / ERR <原因>
  * 網頁 → ESP32：GET、TEST、MINSPD、MINE、RANGE、SIGN、DTTC、DDIST、HOLD、CONFIRM、RTHR、DEFAULTS、REBOOT
@@ -89,6 +89,7 @@ function parseTelemetry(text: string): ParsedLine {
   const distanceM = nonNegative(num(p, 'D'));
   const rawTargets = Math.max(0, Math.round(num(p, 'N') ?? 0));
   const closing = num(p, 'V');
+  const trackDistanceM = nonNegative(num(p, 'TD'));
 
   return {
     kind: 'telemetry',
@@ -107,6 +108,8 @@ function parseTelemetry(text: string): ParsedLine {
       ownSpeedKmh: num(p, 'S') ?? null,
       velocitySource: toVelocitySource(num(p, 'VS')),
       rangeRateMps: num(p, 'RR') ?? null,
+      trackDistanceM,
+      trackClosingMps: trackDistanceM !== null ? (num(p, 'TV') ?? null) : null,
     },
   };
 }

@@ -174,9 +174,12 @@ void ThreatTracker::dropTrack() {
 // freshData：這次是因為收到新量測而評估（保持時間從「最後一次真的偵測到」開始算）
 void ThreatTracker::evaluate(uint32_t nowMs, const DetectionConfig& cfg, bool freshData) {
   // 速度核對資訊：只要有追蹤就回報（還沒確認是來車也一樣），網頁可以看到核對狀態
-  state_.velocitySource = kf_.active() ? velocity_.source() : VelocitySource::None;
-  state_.hasRangeRate   = kf_.active() && hasRangeRate_;
-  state_.rangeRateMps   = state_.hasRangeRate ? rangeRate_ : 0.0f;
+  state_.velocitySource  = kf_.active() ? velocity_.source() : VelocitySource::None;
+  state_.hasRangeRate    = kf_.active() && hasRangeRate_;
+  state_.rangeRateMps    = state_.hasRangeRate ? rangeRate_ : 0.0f;
+  state_.hasTrack        = kf_.active();
+  state_.trackDistanceM  = kf_.active() ? (kf_.range() > 0.0f ? kf_.range() : 0.0f) : -1.0f;
+  state_.trackClosingMps = kf_.active() ? closing_ : 0.0f;
 
   const bool live  = kf_.active() && confirmed_;
   AlertLevel level = AlertLevel::Safe;

@@ -28,6 +28,8 @@ export interface Telemetry {
   ownSpeedKmh: number | null; // S：自身車速（隊友的 Radar B，選用）
   velocitySource: VelocitySource | null; // VS：速度來源（韌體 2.1 起；舊韌體為 null）
   rangeRateMps: number | null; // RR：由距離斜率算出的接近速度（正 = 接近），資料不足時為 null
+  trackDistanceM: number | null; // TD：雷達目前追蹤的目標距離（不論是不是來車；韌體 2.3 起，沒有追蹤時 null）
+  trackClosingMps: number | null; // TV：追蹤目標的接近速度（正 = 接近、負 = 遠離）
   receivedAt: number; // 收到的時間（ms），由網頁填入
 }
 

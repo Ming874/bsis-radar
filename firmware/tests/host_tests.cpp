@@ -333,6 +333,33 @@ static void testC4001Behaviour() {
     }
     CHECK(t.energyMedian() == 0);
   }
+  {  // 站著不動的人：不是來車（安全、沒有來車距離），但「追蹤中的目標」要一直回報距離，網頁才看得到
+    DetectionConfig test = DetectionConfig::defaults();  // 測試模式
+    ThreatTracker   t;
+    for (uint32_t i = 0; i < 30; i++) {
+      t.onMeasurement(target(2.87f + 0.01f * static_cast<float>(i % 3), 0.0f, 3000), 1000 + i * 100, test);
+      t.update(1000 + i * 100, test);
+    }
+    CHECK(t.state().level == AlertLevel::Safe);
+    CHECK(t.state().distanceM < 0.0f);
+    CHECK(t.state().hasTrack);
+    CHECK_NEAR(t.state().trackDistanceM, 2.88f, 0.05f);
+    CHECK_NEAR(t.state().trackClosingMps, 0.0f, 0.1f);
+    RadarMeasurement none;  // 人離開：追蹤結束，不再回報
+    for (uint32_t ms = 100; ms <= 1000; ms += 100) {
+      t.onMeasurement(none, 3900 + ms, test);
+      t.update(3900 + ms, test);
+    }
+    CHECK(!t.state().hasTrack);
+    CHECK(t.state().trackDistanceM < 0.0f);
+  }
+  {  // 遠離中的目標：追蹤速度為負（網頁顯示「遠離」）
+    ThreatTracker t;
+    for (uint32_t i = 0; i < 15; i++) t.onMeasurement(target(3.0f + 0.1f * i, +1.0f, 9000), 1000 + i * 100, roadConfig());
+    CHECK(t.state().level == AlertLevel::Safe);
+    CHECK(t.state().hasTrack);
+    CHECK(t.state().trackClosingMps < -0.5f);
+  }
   {  // 能量只算追蹤中的目標：中間夾著幾筆別處的強反射（被關聯閘門擋掉、彼此不一致），不影響這個目標的能量
     DetectionConfig cfg = roadConfig();
     ThreatTracker   t;
@@ -660,6 +687,22 @@ static void testTelemetry() {
   CHECK(formatTelemetry(idle, line, sizeof(line)) > 0);
   CHECK(strcmp(line, "R=0 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=0 RD=-1.00 RV=0.00 E=0 T=7 VS=0\n") == 0);
 
+  TelemetrySnapshot standing;  // 有人站著（不是來車）：沒有來車距離，但送出追蹤中的目標
+  standing.radarOnline           = true;
+  standing.hasRaw                = true;
+  standing.raw                   = target(2.87f, 0.0f, 3000);
+  standing.energyMedian          = 3000;
+  standing.uptimeS               = 60;
+  standing.threat.velocitySource = VelocitySource::Doppler;
+  standing.threat.hasTrack        = true;
+  standing.threat.trackDistanceM  = 2.874f;
+  standing.threat.trackClosingMps = -0.02f;
+  CHECK(formatTelemetry(standing, line, sizeof(line)) > 0);
+  CHECK(strcmp(line, "R=1 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=1 RD=2.87 RV=0.00 E=3000 T=60 VS=2 TD=2.87 TV=-0.02\n") == 0);
+  standing.radarOnline = false;  // 雷達離線時不送追蹤資料
+  CHECK(formatTelemetry(standing, line, sizeof(line)) > 0);
+  CHECK(strstr(line, "TD=") == nullptr);
+
   CHECK(formatTelemetry(s, line, 20) == 0);  // 空間不夠：不輸出半行
 
   // 最長的情況也要放得進韌體實際使用的緩衝區（kConfigLineMax / kTelemetryLineMax）
@@ -687,9 +730,13 @@ static void testTelemetry() {
   big.threat.velocitySource = VelocitySource::SignFlip;
   big.threat.hasRangeRate   = true;
   big.threat.rangeRateMps   = -150.0f;  // 超出範圍：夾在 -99.99
+  big.threat.hasTrack        = true;
+  big.threat.trackDistanceM  = 500.0f;   // 夾在 99.99
+  big.threat.trackClosingMps = -150.0f;  // 夾在 -99.99
   char telLine[kTelemetryLineMax];
   CHECK(formatTelemetry(big, telLine, sizeof(telLine)) > 0);
-  CHECK(strstr(telLine, " VS=5 RR=-99.99\n") != nullptr);
+  CHECK(strstr(telLine, " VS=5 RR=-99.99 TD=99.99 TV=-99.99\n") != nullptr);
+  CHECK(strlen(telLine) + strlen(" S=999.9") < kTelemetryLineMax);  // 加上 Radar B 的自身車速也放得下
 
   CHECK(formatConfig(DetectionConfig::defaults(), "2.2.0", line, sizeof(line)) > 0);
   CHECK(strcmp(line,

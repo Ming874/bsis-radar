@@ -1,7 +1,7 @@
 /*!
  * @file    RadarA_C4001_BLE.ino
  * @brief   Radar A：自行車後方來車偵測（DFRobot C4001 25m，UART）＋ 藍牙 BLE 輸出
- * @version 2.2.0
+ * @version 2.3.0
  *
  * 程式架構（上層呼叫下層，下層不知道上層）：
  *   應用層  RadarA_C4001_BLE.ino     只負責接線與啟動

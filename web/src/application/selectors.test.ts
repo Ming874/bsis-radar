@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Telemetry } from '../domain/types';
-import { selectEnergyPeak, selectSafety } from './selectors';
+import { describeTrack, selectEnergyPeak, selectSafety } from './selectors';
 
 const telemetry = (patch: Partial<Telemetry> = {}): Telemetry => ({
   radarOnline: true,
@@ -17,8 +17,23 @@ const telemetry = (patch: Partial<Telemetry> = {}): Telemetry => ({
   ownSpeedKmh: null,
   velocitySource: null,
   rangeRateMps: null,
+  trackDistanceM: null,
+  trackClosingMps: null,
   receivedAt: 10_000,
   ...patch,
+});
+
+describe('describeTrack', () => {
+  it('雷達追蹤中、不是來車的目標：距離與靜止／接近／遠離', () => {
+    expect(describeTrack(telemetry({ trackDistanceM: 2.87, trackClosingMps: -0.02 }), 'mps')).toBe('偵測到目標 2.9 m・靜止');
+    expect(describeTrack(telemetry({ trackDistanceM: 3.4, trackClosingMps: -0.6 }), 'mps')).toBe('偵測到目標 3.4 m・遠離 0.6 m/s');
+    expect(describeTrack(telemetry({ trackDistanceM: 5, trackClosingMps: 1 }), 'kmh')).toBe('偵測到目標 5.0 m・接近 4 km/h');
+  });
+
+  it('沒有追蹤或舊韌體（沒有 TD）時回傳 null', () => {
+    expect(describeTrack(telemetry(), 'mps')).toBeNull();
+    expect(describeTrack(null, 'mps')).toBeNull();
+  });
 });
 
 describe('selectSafety', () => {

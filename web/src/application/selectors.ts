@@ -1,7 +1,12 @@
 /**
  * 【應用層】把狀態整理成畫面要的樣子（純函式，可單元測試）。
  */
+import type { Telemetry } from '../domain/types';
+import { formatSpeed, speedUnitLabel, type SpeedUnit } from '../domain/units';
 import type { RadarState } from './radarStore';
+
+/** 追蹤目標的速度小於這個值就說「靜止」（與室內測試模式的接近速度門檻相同） */
+const STILL_MPS = 0.1;
 
 export type SafetyTone = 'idle' | 'connecting' | 'offline' | 'stale' | 'safe' | 'caution' | 'danger';
 
@@ -36,6 +41,17 @@ export function selectSafety(s: Pick<RadarState, 'connection' | 'stale' | 'telem
     title: '安全',
     detail: t.distanceM === null ? '後方沒有接近中的車輛' : `有目標在 ${t.distanceM.toFixed(0)} m 外接近，尚未進入警示範圍`,
   };
+}
+
+/**
+ * 雷達正在追蹤、但不是來車的目標（站著的人、遠離的車…）→ 警示卡下方的一句話，例如「偵測到目標 2.9 m・靜止」。
+ * 沒有追蹤（或舊韌體沒有 TD 欄位）時回傳 null。
+ */
+export function describeTrack(t: Pick<Telemetry, 'trackDistanceM' | 'trackClosingMps'> | null, unit: SpeedUnit): string | null {
+  if (!t || t.trackDistanceM === null) return null;
+  const v = t.trackClosingMps ?? 0;
+  const motion = Math.abs(v) < STILL_MPS ? '靜止' : `${v > 0 ? '接近' : '遠離'} ${formatSpeed(Math.abs(v), unit)} ${speedUnitLabel(unit)}`;
+  return `偵測到目標 ${t.trackDistanceM.toFixed(1)} m・${motion}`;
 }
 
 /** 最近 windowMs 內的最大反射能量（校正用） */

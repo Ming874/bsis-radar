@@ -9,7 +9,7 @@
 #pragma once
 #include <stdint.h>
 
-#define FW_VERSION "2.2.0"
+#define FW_VERSION "2.3.0"
 
 namespace app {
 

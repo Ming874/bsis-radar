@@ -8,7 +8,7 @@ import { actions, capabilities, radarStore, useRadar } from '../../../applicatio
 import { selectEnergyPeak } from '../../../application/selectors';
 import { DEFAULT_DEVICE_CONFIG } from '../../../domain/protocol';
 import type { VelocitySource } from '../../../domain/types';
-import { formatDuration, mpsToKmh } from '../../../domain/units';
+import { mpsToKmh } from '../../../domain/units';
 import { PARAM_HELP, VALUE_HELP } from '../../content/help';
 import {
   ActivityIcon,
@@ -80,7 +80,8 @@ function RawData() {
   const has = (telemetry?.rawTargets ?? 0) > 0;
   const speed = telemetry?.rawSpeedMps ?? null;
   const rangeRate = telemetry?.rangeRateMps ?? null;
-  const closing = telemetry?.closingMps ?? null;
+  const trackM = telemetry?.trackDistanceM ?? null;
+  const trackV = telemetry?.trackClosingMps ?? null;
   const source = telemetry?.velocitySource ?? null;
   const cells: Cell[] = [
     { label: '原始距離', value: has && telemetry?.rawRangeM != null ? telemetry.rawRangeM.toFixed(2) : '—', unit: 'm' },
@@ -89,6 +90,14 @@ function RawData() {
       value: speed === null ? '—' : speed.toFixed(2),
       unit: 'm/s',
       hint: speed === null ? undefined : `${mpsToKmh(speed).toFixed(0)} km/h`,
+    },
+    { label: '目標數', value: telemetry ? String(telemetry.rawTargets) : '—' },
+    { label: '追蹤距離', value: trackM === null ? '—' : trackM.toFixed(2), unit: 'm', hint: trackM === null ? undefined : '濾波後，不論是否接近' },
+    {
+      label: '追蹤速度',
+      value: trackV === null ? '—' : Math.abs(trackV).toFixed(2),
+      unit: 'm/s',
+      hint: trackV === null ? undefined : Math.abs(trackV) < 0.1 ? '靜止' : trackV > 0 ? '接近中' : '遠離中',
     },
     {
       label: '距離變化率',
@@ -101,11 +110,8 @@ function RawData() {
       value: source === null ? '—' : VELOCITY_SOURCE[source].label,
       dot: source === null ? undefined : VELOCITY_SOURCE[source].dot,
     },
-    { label: '追蹤接近速度', value: closing === null ? '—' : closing.toFixed(2), unit: 'm/s' },
-    { label: '目標數', value: telemetry ? String(telemetry.rawTargets) : '—' },
     { label: '反射能量', value: telemetry ? telemetry.energy.toLocaleString() : '—' },
     { label: '10 秒最大能量', value: telemetry ? peak.toLocaleString() : '—' },
-    { label: 'ESP32 運作', value: telemetry ? formatDuration(telemetry.uptimeS) : '—' },
   ];
   return (
     <div className="grid grid-cols-3 gap-px bg-line">

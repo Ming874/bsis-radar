@@ -28,7 +28,9 @@ void RadarApp::begin() {
 
   radar_.setThrFactor(config_.radarThreshold, millis());  // 雷達門檻存在 NVS（RTHR），開機時寫進雷達
   radar_.begin(millis());
-  console_.println("輸入 HELP 查看指令。欄位：狀態 | 原始 目標數/距離/速度/能量 | 追蹤 距離/接近速度/TTC | 等級");
+  console_.println(
+      "輸入 HELP 查看指令。欄位：狀態 | 原始 目標數/距離/速度/能量 | 追蹤中的目標 距離/接近速度 | "
+      "確認的來車 距離/接近速度/距離變化率/TTC [速度來源] | 等級");
 }
 
 void RadarApp::loop() {
@@ -185,12 +187,14 @@ void RadarApp::printDebug(uint32_t nowMs) {
   static const char* const kSourceText[] = {"-", "核對中", "都卜勒", "折疊還原", "距離變化率", "正負號相反"};
   const ThreatState&       t = tracker_.state();
   const bool               raw = hasRaw_ && lastRaw_.targets > 0;
-  console_.printf("%-6s | N=%u RD=%5.2f RV=%6.2f E=%-8lu | D=%5.2f V=%5.2f RR=%5.2f TTC=%4.1f [%s] | %s%s\n",
+  console_.printf("%-6s | N=%u RD=%5.2f RV=%6.2f E=%-8lu | TD=%5.2f TV=%5.2f | D=%5.2f V=%5.2f RR=%5.2f TTC=%4.1f [%s] | %s%s\n",
                   radar_.stateName(),
                   raw ? 1U : 0U,
                   raw ? lastRaw_.rangeM : -1.0f,
                   raw ? lastRaw_.speedMps : 0.0f,
                   static_cast<unsigned long>(tracker_.energyMedian()),
+                  t.trackDistanceM,
+                  t.trackClosingMps,
                   t.distanceM,
                   t.closingMps,
                   t.hasRangeRate ? t.rangeRateMps : 0.0f,

@@ -9,6 +9,9 @@ size_t finish(int written, size_t cap) {
   return static_cast<size_t>(written);
 }
 
+// 夾在範圍內，欄位長度才固定在緩衝區放得下的範圍
+float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
 }  // namespace
 
 size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
@@ -18,14 +21,16 @@ size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
 
   // 距離變化率只在資料足夠時才送（夾在 ±99.99，欄位長度固定在範圍內）
   char rr[16] = "";
-  if (online && t.hasRangeRate) {
-    float v = t.rangeRateMps;
-    if (v > 99.99f) v = 99.99f;
-    if (v < -99.99f) v = -99.99f;
-    snprintf(rr, sizeof(rr), " RR=%.2f", v);
+  if (online && t.hasRangeRate) snprintf(rr, sizeof(rr), " RR=%.2f", clampf(t.rangeRateMps, -99.99f, 99.99f));
+
+  // 目前追蹤的目標（不論是不是來車）只在有追蹤時才送
+  char track[32] = "";
+  if (online && t.hasTrack) {
+    snprintf(track, sizeof(track), " TD=%.2f TV=%.2f", clampf(t.trackDistanceM, 0.0f, 99.99f),
+             clampf(t.trackClosingMps, -99.99f, 99.99f));
   }
 
-  const int n = snprintf(out, cap, "R=%d W=%d L=%d D=%.2f V=%.2f TTC=%.1f N=%u RD=%.2f RV=%.2f E=%lu T=%lu VS=%u%s\n",
+  const int n = snprintf(out, cap, "R=%d W=%d L=%d D=%.2f V=%.2f TTC=%.1f N=%u RD=%.2f RV=%.2f E=%lu T=%lu VS=%u%s%s\n",
                          online ? 1 : 0,
                          t.warning() ? 1 : 0,
                          static_cast<int>(t.level),
@@ -38,7 +43,8 @@ size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
                          online ? static_cast<unsigned long>(s.energyMedian) : 0UL,
                          static_cast<unsigned long>(s.uptimeS),
                          online ? static_cast<unsigned>(t.velocitySource) : 0U,
-                         rr);
+                         rr,
+                         track);
   return finish(n, cap);
 }
 

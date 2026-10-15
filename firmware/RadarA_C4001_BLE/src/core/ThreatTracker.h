@@ -39,6 +39,10 @@ struct ThreatState {
   VelocitySource velocitySource = VelocitySource::None;  // 速度來源 / 交叉核對結果
   bool           hasRangeRate   = false;  // 下一個欄位是否有效
   float          rangeRateMps   = 0.0f;   // 由距離斜率算出的接近速度（m/s，正值 = 接近），對照用
+  // 雷達目前追蹤的目標，不論是不是來車（靜止、遠離、還沒確認的都算）：讓網頁看得到「雷達有看到東西」
+  bool           hasTrack        = false;
+  float          trackDistanceM  = -1.0f;  // 追蹤距離（m，卡爾曼濾波後）
+  float          trackClosingMps = 0.0f;   // 追蹤目標的接近速度（m/s，正 = 接近、負 = 遠離）
 
   bool warning() const { return level != AlertLevel::Safe; }
 };

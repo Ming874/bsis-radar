@@ -3,7 +3,7 @@
  * 騎車時看一眼就懂；危險時卡片外圈會呼吸發光。
  */
 import type { ComponentType } from 'react';
-import type { SafetyTone, SafetyView } from '../../../application/selectors';
+import { describeTrack, type SafetyTone, type SafetyView } from '../../../application/selectors';
 import type { HistoryPoint, Telemetry } from '../../../domain/types';
 import { formatSeconds, formatSpeed, speedUnitLabel, type SpeedUnit } from '../../../domain/units';
 import { AlertIcon, ClockIcon, LoaderIcon, ShieldCheckIcon, SignalOffIcon } from '../../kit';
@@ -39,15 +39,15 @@ const ICON: Record<SafetyTone, ComponentType<{ className?: string }>> = {
   idle: SignalOffIcon,
 };
 
-/** 數字下方的一句話：告訴騎士現在該怎麼做 */
-function caption(view: SafetyView, tracking: boolean): string {
+/** 數字下方的一句話：告訴騎士現在該怎麼做；安全時若雷達追蹤到目標（不是來車）也說出來 */
+function caption(view: SafetyView, tracking: boolean, track: string | null): string {
   switch (view.tone) {
     case 'danger':
       return '即將到達，請保持直線、不要變換車道';
     case 'caution':
       return '後方有車接近，變換車道前請先注意';
     case 'safe':
-      return tracking ? '有車在警示範圍外接近中' : '後方淨空';
+      return tracking ? '有車在警示範圍外接近中' : (track ?? '後方淨空');
     default:
       return view.detail;
   }
@@ -89,6 +89,9 @@ export function StatusPanel({
   const distance = telemetry?.distanceM ?? null;
   const tracking = distance !== null;
   const danger = view.tone === 'danger';
+  // 雷達追蹤中、但沒有在接近的目標（例如站著的人）：不警示，但要讓人知道雷達有看到
+  const trackM = tracking ? null : (telemetry?.trackDistanceM ?? null);
+  const track = describeTrack(telemetry, unit);
 
   return (
     <section aria-live="assertive" aria-atomic="true" className="relative">
@@ -119,7 +122,7 @@ export function StatusPanel({
               </span>
               {tracking && <span className="font-rounded text-2xl font-semibold opacity-80 lg:text-3xl">m</span>}
             </p>
-            <p className="mt-1.5 min-h-5 text-callout font-medium opacity-90">{caption(view, tracking)}</p>
+            <p className="mt-1.5 min-h-5 text-callout font-medium opacity-90">{caption(view, tracking, track)}</p>
 
             <div className="mt-auto grid grid-cols-2 gap-2.5 pt-5">
               <GlassMetric
@@ -132,7 +135,14 @@ export function StatusPanel({
             </div>
           </div>
 
-          <RadarStrip distanceM={distance} warnRangeM={warnRangeM} dangerDistM={dangerDistM} trail={trail} pulse={danger} />
+          <RadarStrip
+            distanceM={distance}
+            trackM={trackM}
+            warnRangeM={warnRangeM}
+            dangerDistM={dangerDistM}
+            trail={trail}
+            pulse={danger}
+          />
         </div>
       </div>
     </section>

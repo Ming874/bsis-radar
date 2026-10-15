@@ -18,6 +18,8 @@ function sample(t: number, level: AlertLevel, distanceM: number | null = null, c
     ownSpeedKmh: null,
     velocitySource: null,
     rangeRateMps: null,
+    trackDistanceM: distanceM,
+    trackClosingMps: closingMps,
     receivedAt: t,
   };
 }

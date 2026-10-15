@@ -64,7 +64,7 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 5. **分級**：距離 ≤ `RANGE` 為注意；到達時間 ≤ `DTTC` 或距離 ≤ `DDIST` 為危險。
 6. **保持**：最後一次真正偵測到後，警示再維持 `HOLD` 毫秒。
 
-序列埠監看（`.\arduino.ps1 monitor`）每 0.2 秒印一行，`RR` 是距離變化率、方括號是速度來源（核對中／都卜勒／折疊還原／距離變化率／正負號相反）。
+序列埠監看（`.\arduino.ps1 monitor`）每 0.2 秒印一行：`TD`／`TV` 是雷達目前追蹤的目標（不論是不是來車），`D`／`V` 只有確認的來車才有值，`RR` 是距離變化率、方括號是速度來源（核對中／都卜勒／折疊還原／距離變化率／正負號相反）。
 
 ### LED（板載藍燈，GPIO2）
 
@@ -83,7 +83,7 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 
 ## 測試
 
-`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯（188 項），涵蓋資料框解析、指令解析與範圍、輸出格式（含最長一行不超過緩衝區）、來車確認／分級／保持、換目標、雜訊與掉資料、速度交叉核對的各種情境（都卜勒折疊、飽和、報 0、`SIGN` 設反、加減速、反射點跳動），以及 C4001 實測行為（外插資料框、能量中位數）。需要電腦端的 `g++`（例如 MinGW-w64）。
+`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯（203 項），涵蓋資料框解析、指令解析與範圍、輸出格式（含最長一行不超過緩衝區）、來車確認／分級／保持、換目標、雜訊與掉資料、速度交叉核對的各種情境（都卜勒折疊、飽和、報 0、`SIGN` 設反、加減速、反射點跳動）、C4001 實測行為（外插資料框、能量中位數），以及追蹤中目標（`TD`／`TV`）的回報。需要電腦端的 `g++`（例如 MinGW-w64）。
 
 ```powershell
 .\arduino.ps1 test

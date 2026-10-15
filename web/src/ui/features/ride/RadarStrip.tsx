@@ -19,12 +19,15 @@ const y = (m: number) => TOP + (Math.min(Math.max(m, 0), MAX_M) / MAX_M) * (H - 
 
 export function RadarStrip({
   distanceM,
+  trackM = null,
   warnRangeM,
   dangerDistM,
   trail,
   pulse = false,
 }: {
   distanceM: number | null;
+  /** 雷達追蹤中、但不是來車的目標（例如站著的人）：畫成空心圈，和來車的實心點區分 */
+  trackM?: number | null;
   warnRangeM: number;
   dangerDistM: number;
   trail: HistoryPoint[];
@@ -75,6 +78,11 @@ export function RadarStrip({
         p.distanceM === null ? null : (
           <circle key={p.t} cx={X} cy={y(p.distanceM)} r={3} fill="currentColor" opacity={Math.max(0.12, 0.5 - (lastT - p.t) / 4500)} />
         ),
+      )}
+
+      {/* 追蹤中、但沒有在接近的目標：空心圈 */}
+      {distanceM === null && trackM !== null && (
+        <circle cx={X} cy={y(trackM)} r={7} fill="none" stroke="currentColor" strokeWidth={2.5} opacity={0.75} />
       )}
 
       {/* 來車：柔光 + 實心點；危險時外圈擴散 */}

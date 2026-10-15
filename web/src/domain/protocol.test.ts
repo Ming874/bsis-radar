@@ -22,7 +22,21 @@ describe('parseLine：遙測', () => {
       ownSpeedKmh: null,
       velocitySource: 'doppler',
       rangeRateMps: 6.11,
+      trackDistanceM: null,
+      trackClosingMps: null,
     });
+  });
+
+  it('追蹤中的目標（TD／TV，韌體 2.3 起）：沒有來車時也有值；舊韌體沒有就是 null', () => {
+    const r = parseLine('R=1 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=1 RD=2.87 RV=0.00 E=3000 T=60 VS=2 TD=2.87 TV=-0.02');
+    if (r.kind !== 'telemetry') throw new Error('not telemetry');
+    expect(r.telemetry.distanceM).toBeNull();
+    expect(r.telemetry.trackDistanceM).toBe(2.87);
+    expect(r.telemetry.trackClosingMps).toBe(-0.02);
+    const orphan = parseLine('R=1 L=0 D=-1 TV=1.5'); // 沒有 TD 時 TV 不採用
+    if (orphan.kind !== 'telemetry') throw new Error('not telemetry');
+    expect(orphan.telemetry.trackDistanceM).toBeNull();
+    expect(orphan.telemetry.trackClosingMps).toBeNull();
   });
 
   it('速度交叉核對欄位：VS 對照、RR 可省略、舊韌體沒有 VS', () => {
