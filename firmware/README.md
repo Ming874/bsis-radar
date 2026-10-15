@@ -48,7 +48,7 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 
 - 開機時完整設定一次（`sensorStop` → `setRunApp 1` → `sensorStop` → `setRange 0.3 20.0` → `setThrFactor <RTHR>` → `setMicroMotion 0` → `saveConfig` → `getRange`、`getThrFactor` 讀回 → `sensorStart`），之後斷線只送 `sensorStart`；網頁改了 `RTHR` 也會重新完整設定。
 - 設定過程中雷達的回覆會印在序列埠：`[Radar A] 雷達讀回 getThrFactor：5.00`；被雷達拒絕的指令會印 `雷達拒絕指令（第 N 步）`。
-- 雷達實測行為（10 Hz、只回報會動的目標、外插資料框、門檻單位）見 [docs/ALGORITHM.md §10](../docs/ALGORITHM.md)；實測用的直通程式與語音引導走動測試在 [diagnostics/](diagnostics/README.md)。
+- 雷達實測行為（10 Hz、一次一個目標、正對的牆會被回報成靜止目標、外插資料框、門檻單位）見 [docs/ALGORITHM.md §10](../docs/ALGORITHM.md)；實測用的直通程式與語音引導走動測試在 [diagnostics/](diagnostics/README.md)。
 - 連續失敗會把重試間隔從 3 秒拉長到 60 秒，避免一直寫快閃記憶體。
 - 超過約 2.5 秒沒有資料就判定離線並自動重連。
 
