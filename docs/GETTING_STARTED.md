@@ -100,7 +100,7 @@ cd firmware
 ## 5. 手機連線
 
 1. ESP32 接上電（電腦 USB 或行動電源）。
-2. 手機打開藍牙，用 **Chrome** 開啟 <https://bsis.iosoftware.ai>。
+2. 手機打開藍牙，用 **Chrome** 開啟 <https://bsis.mingchen.dev>。
 3. 按「**連線雷達**」→ 在跳出的視窗選 **RadarA-ESP32** → 配對。
    - 如果要求「附近裝置」或位置權限，請按允許。
 4. 建議在 Chrome 選單選「**加入主畫面**」，之後像 App 一樣全螢幕開啟。

@@ -14,7 +14,7 @@
 - `docs/proposal/`（計畫書 PDF，含組員學號）不進 git
 
 ## Zeabur Deployment
-- 網址：https://bsis.iosoftware.ai（只有這一個網址）
+- 網址：https://bsis.mingchen.dev（只有這一個網址）
 - Project ID: 6ac0ef3493154e21e628668f（bsis-radar，Ming's Server）
 - Service ID: 6ac1119593154e21e62873bc（web；GitHub Ming874/bsis-radar 的 `main`，Root Directory `/web`）
 - **push 到 `main` 就會自動建置部署**，不要再用 `npx zeabur deploy` 上傳（會蓋掉 Git 設定）

@@ -36,7 +36,7 @@ export function ConnectPanel() {
           <div className="mt-6 space-y-3">
             {insecure && (
               <Banner tone="danger" title="需要 HTTPS">
-                瀏覽器只允許在 HTTPS 網頁使用藍牙，請用正式網址 bsis.iosoftware.ai 開啟。
+                瀏覽器只允許在 HTTPS 網頁使用藍牙，請用正式網址 bsis.mingchen.dev 開啟。
               </Banner>
             )}
             {capabilities.brave && (

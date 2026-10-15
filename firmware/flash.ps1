@@ -213,4 +213,4 @@ if (-not $NoVerify) {
 }
 
 Write-Host ''
-Write-Host '下一步：手機用 Chrome 開啟 https://bsis.iosoftware.ai ，按「連線雷達」。' -ForegroundColor White
+Write-Host '下一步：手機用 Chrome 開啟 https://bsis.mingchen.dev ，按「連線雷達」。' -ForegroundColor White

@@ -200,7 +200,7 @@ export const FAQ: Array<{ q: string; a: string[] }> = [
       'Android 手機請用 Chrome。',
       'iPhone 的 Safari 不支援 Web Bluetooth，請到 App Store 安裝「Bluefy」瀏覽器再開啟這個網址。',
       '電腦（Windows、macOS）請用 Chrome 或 Edge，電腦需要有藍牙；Firefox 不支援。',
-      '網頁必須用 HTTPS 開啟：請用正式網址 https://bsis.iosoftware.ai。',
+      '網頁必須用 HTTPS 開啟：請用正式網址 https://bsis.mingchen.dev。',
     ],
   },
   {

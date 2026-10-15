@@ -16,7 +16,7 @@ ESP32 讀取裝在座墊下方、朝後的 DFRobot C4001 24 GHz 毫米波雷達�
 
 | | 網址 |
 | --- | --- |
-| 網頁（手機、電腦都可以） | <https://bsis.iosoftware.ai> |
+| 網頁（手機、電腦都可以） | <https://bsis.mingchen.dev> |
 | 原始碼 | <https://github.com/Ming874/bsis-radar> |
 
 ---
@@ -41,7 +41,7 @@ flowchart LR
     B["Radar B<br/>自身車速（隊友）"] -. "UART（選用）" .-> E
     P["發電花鼓 → 5 V（隊友）"] -. 供電 .-> E
   end
-  E -- "藍牙 BLE，每 0.2 秒" --> W["網頁<br/>bsis.iosoftware.ai"]
+  E -- "藍牙 BLE，每 0.2 秒" --> W["網頁<br/>bsis.mingchen.dev"]
   W --> R(("騎士：畫面・嗶聲・震動・語音"))
 ```
 
@@ -131,7 +131,7 @@ npm run build
 
 ## 部署
 
-網頁部署在 Zeabur（專案 `bsis-radar`），網域 <https://bsis.iosoftware.ai>。Zeabur 連結這個 GitHub repo 的 `main` 分支，**push 之後會自動重新建置 `web/` 並上線**，不需要手動部署。
+網頁部署在 Zeabur（專案 `bsis-radar`），網域 <https://bsis.mingchen.dev>。Zeabur 連結這個 GitHub repo 的 `main` 分支，**push 之後會自動重新建置 `web/` 並上線**，不需要手動部署。
 
 ## 實機測試結果（2026-10-03）
 
