@@ -8,6 +8,7 @@ RadarApp::RadarApp(const Wiring& w)
       radar_(w.radarPort, w.radar, w.console),
       bleConfig_(w.ble),
       led_(w.ledPin),
+      wheel_(w.wheelPin),
       config_(DetectionConfig::defaults()),
       telemetryPeriodMs_(w.telemetryPeriodMs),
       debugPeriodMs_(w.debugPeriodMs),
@@ -28,6 +29,7 @@ void RadarApp::begin() {
 
   radar_.setThrFactor(config_.radarThreshold, millis());  // 雷達門檻存在 NVS（RTHR），開機時寫進雷達
   radar_.begin(millis());
+  wheel_.begin();  // 輪速感測器：收到第一個脈衝後才開始回報自身車速
   console_.println(
       "輸入 HELP 查看指令。欄位：狀態 | 原始 目標數/距離/速度/能量 | 追蹤中的目標 距離/接近速度 | "
       "確認的來車 距離/接近速度/距離變化率/TTC [速度來源] | 等級");
@@ -38,6 +40,8 @@ void RadarApp::loop() {
 
   pumpRadar(now);                 // 驅動層 → 核心層
   tracker_.update(now, config_);  // 處理目標消失、警示保持的逾時
+  uint32_t pulseMs;
+  while (wheel_.popPulse(pulseMs)) wheelSpeed_.onPulse(pulseMs);  // 輪速脈衝 → 自身車速
   pumpCommands();                 // 手機 / 序列埠指令
 
   publishTelemetry(now, tracker_.consumeLevelChange());  // 等級一變就立刻送，不等週期
@@ -99,7 +103,7 @@ void RadarApp::handleCommand(const char* text, Channel from) {
     case CommandType::Help:
       reply(from,
             "OK commands: GET, TEST 0|1, MINSPD <m/s>, MINE <int>, RANGE <m>, SIGN -1|0|1, DTTC <s>, DDIST <m>, "
-            "HOLD <ms>, CONFIRM <n>, RTHR <1-50>, DEFAULTS, REBOOT\n");
+            "HOLD <ms>, CONFIRM <n>, RTHR <1-50>, WHEEL <mm>, DEFAULTS, REBOOT\n");
       return;
     default:
       break;
@@ -173,6 +177,8 @@ void RadarApp::publishTelemetry(uint32_t nowMs, bool urgent) {
   s.raw          = lastRaw_;
   s.energyMedian = tracker_.energyMedian();
   s.uptimeS      = nowMs / 1000;
+  s.hasOwnSpeed  = wheelSpeed_.seen();
+  s.ownSpeedKmh  = wheelSpeed_.speedKmh(nowMs, config_.wheelMm);
 
   char line[kTelemetryLineMax];
   if (formatTelemetry(s, line, sizeof(line)) > 0) ble_.sendLine(line);
@@ -187,7 +193,9 @@ void RadarApp::printDebug(uint32_t nowMs) {
   static const char* const kSourceText[] = {"-", "核對中", "都卜勒", "折疊還原", "距離變化率", "正負號相反"};
   const ThreatState&       t = tracker_.state();
   const bool               raw = hasRaw_ && lastRaw_.targets > 0;
-  console_.printf("%-6s | N=%u RD=%5.2f RV=%6.2f E=%-8lu | TD=%5.2f TV=%5.2f | D=%5.2f V=%5.2f RR=%5.2f TTC=%4.1f [%s] | %s%s\n",
+  char own[20] = "";
+  if (wheelSpeed_.seen()) snprintf(own, sizeof(own), "  車速 %.1f km/h", wheelSpeed_.speedKmh(nowMs, config_.wheelMm));
+  console_.printf("%-6s | N=%u RD=%5.2f RV=%6.2f E=%-8lu | TD=%5.2f TV=%5.2f | D=%5.2f V=%5.2f RR=%5.2f TTC=%4.1f [%s] | %s%s%s\n",
                   radar_.stateName(),
                   raw ? 1U : 0U,
                   raw ? lastRaw_.rangeM : -1.0f,
@@ -201,6 +209,7 @@ void RadarApp::printDebug(uint32_t nowMs) {
                   t.ttcS,
                   kSourceText[static_cast<uint8_t>(t.velocitySource)],
                   kLevelText[static_cast<uint8_t>(t.level)],
+                  own,
                   ble_.connected() ? "  [手機已連]" : "");
 }
 

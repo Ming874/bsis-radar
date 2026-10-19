@@ -25,6 +25,8 @@ constexpr uint8_t  kConfirmLo       = 1;            // CONFIRM（筆）
 constexpr uint8_t  kConfirmHi       = 6;
 constexpr uint8_t  kRadarThrLo      = 1;            // RTHR（C4001 setThrFactor，原廠預設 5）
 constexpr uint8_t  kRadarThrHi      = 50;
+constexpr uint16_t kWheelMmLo       = 1000;         // WHEEL（輪周長 mm）：12 吋小輪 ～ 29 吋大胎
+constexpr uint16_t kWheelMmHi       = 3000;
 }  // namespace limits
 
 struct DetectionConfig {
@@ -38,6 +40,7 @@ struct DetectionConfig {
   uint16_t holdMs;        // HOLD    ：目標消失後警示再保持多久（ms）
   uint8_t  confirmHits;   // CONFIRM ：累積幾筆合格資料才確認是來車
   uint8_t  radarThreshold;  // RTHR    ：寫進 C4001 的偵測門檻（setThrFactor），越大越不靈敏
+  uint16_t wheelMm;         // WHEEL   ：輪周長（mm），輪速感測器算自身車速用
 
   // 目前實際使用的接近速度門檻
   float effectiveMinSpeed() const { return testMode ? limits::kTestMinSpeedMps : minSpeedMps; }

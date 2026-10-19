@@ -10,8 +10,9 @@
  *   VS 速度來源（VelocitySource：0 無 / 1 核對中 / 2 都卜勒 / 3 折疊還原 / 4 距離變化率 / 5 正負號相反）
  *   RR 由距離斜率算的接近速度 m/s（正 = 接近；資料不足時不送這個欄位）
  *   TD/TV 雷達目前追蹤的目標距離 m／接近速度 m/s（不論是不是來車；沒有追蹤時不送，韌體 2.3 起）
+ *   S 自身車速 km/h（輪子上的霍爾感測器；開機後還沒收過脈衝＝沒接感測器時不送，韌體 2.4 起）
  *
- * 設定回覆：CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 FW=2.3.0
+ * 設定回覆：CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 WHEEL=2105 FW=2.4.0
  *
  * 每行以 '\n' 結尾；藍牙會依 MTU 分段送出，網頁端收到 '\n' 才算一行。
  */
@@ -34,6 +35,8 @@ struct TelemetrySnapshot {
   RadarMeasurement raw;
   uint32_t         energyMedian = 0;
   uint32_t         uptimeS      = 0;
+  bool             hasOwnSpeed  = false;  // 有接輪速感測器（開機後收過脈衝）
+  float            ownSpeedKmh  = 0.0f;
 };
 
 // 回傳寫入的字元數（含結尾 '\n'），空間不足時回傳 0

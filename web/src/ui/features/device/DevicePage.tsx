@@ -1,5 +1,5 @@
 /**
- * 【裝置】ESP32 與雷達：即時原始資料、模式切換、10 項偵測參數（點一下編輯）、工具。
+ * 【裝置】ESP32 與雷達：即時原始資料、模式切換、11 項參數（點一下編輯）、工具。
  * 電腦版分兩欄：左邊資料與工具、右邊偵測參數。
  */
 import { useCallback, useState, type ReactNode } from 'react';
@@ -14,6 +14,7 @@ import {
   ActivityIcon,
   AlertIcon,
   Banner,
+  BikeIcon,
   BluetoothIcon,
   BookIcon,
   Button,
@@ -53,6 +54,7 @@ const PARAM_ICON: Record<ParamKey, { icon: ReactNode; tone: Tone }> = {
   confirmHits: { icon: <CheckCircleIcon />, tone: 'safe' },
   holdMs: { icon: <HistoryIcon />, tone: 'safe' },
   radarThreshold: { icon: <RadarIcon />, tone: 'accent' },
+  wheelMm: { icon: <BikeIcon />, tone: 'safe' },
 };
 
 type SheetState = { kind: 'param'; key: ParamKey } | { kind: 'console' } | { kind: 'guide' } | { kind: 'defaults' } | { kind: 'reboot' } | null;
@@ -169,7 +171,7 @@ export function DevicePage() {
       <div className="space-y-4">
         <PageHeader title="裝置" subtitle="ESP32 與雷達的偵測參數" />
         <Section>
-          <EmptyState icon={<CpuIcon />} title="尚未連線" description="連線後可以即時查看雷達資料，並調整 ESP32 的 10 項偵測參數。">
+          <EmptyState icon={<CpuIcon />} title="尚未連線" description="連線後可以即時查看雷達資料，並調整 ESP32 的 11 項參數。">
             {capabilities.bluetooth ? (
               <Button variant="primary" size="lg" block onClick={() => void actions.connectBluetooth()}>
                 <BluetoothIcon />
@@ -289,7 +291,7 @@ export function DevicePage() {
       {sheet?.kind === 'defaults' && (
         <ConfirmSheet
           title="全部恢復預設值？"
-          message={`ESP32 的 10 項偵測參數會改回預設：室內測試模式開、接近速度 ${DEFAULT_DEVICE_CONFIG.minSpeedMps} m/s、警示距離 ${DEFAULT_DEVICE_CONFIG.warnRangeM} m、危險到達時間 ${DEFAULT_DEVICE_CONFIG.dangerTtcS} 秒等。`}
+          message={`ESP32 的 11 項參數會改回預設：室內測試模式開、接近速度 ${DEFAULT_DEVICE_CONFIG.minSpeedMps} m/s、警示距離 ${DEFAULT_DEVICE_CONFIG.warnRangeM} m、危險到達時間 ${DEFAULT_DEVICE_CONFIG.dangerTtcS} 秒等。`}
           confirmLabel="恢復預設"
           destructive
           onConfirm={() => void send({ type: 'defaults' })}

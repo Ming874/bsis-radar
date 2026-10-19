@@ -116,6 +116,7 @@ switch ($Action) {
       (Join-Path $src 'core\RangeKalman.cpp') `
       (Join-Path $src 'core\RangeRateWindow.cpp') `
       (Join-Path $src 'core\VelocityCheck.cpp') `
+      (Join-Path $src 'core\WheelSpeed.cpp') `
       (Join-Path $src 'drivers\C4001Protocol.cpp') `
       (Join-Path $src 'comm\CommandParser.cpp') `
       (Join-Path $src 'comm\Telemetry.cpp') `

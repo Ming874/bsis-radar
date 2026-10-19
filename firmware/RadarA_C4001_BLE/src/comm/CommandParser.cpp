@@ -20,6 +20,7 @@ const Keyword kKeywords[] = {
     {"DDIST", CommandType::DangerDist},  {"HOLD", CommandType::Hold},
     {"CONFIRM", CommandType::Confirm},   {"DEFAULTS", CommandType::Defaults},
     {"REBOOT", CommandType::Reboot},     {"RTHR", CommandType::RadarThreshold},
+    {"WHEEL", CommandType::Wheel},
 };
 
 bool inRange(double v, double lo, double hi) { return v >= lo && v <= hi; }
@@ -96,6 +97,7 @@ bool isConfigCommand(CommandType type) {
     case CommandType::Hold:
     case CommandType::Confirm:
     case CommandType::RadarThreshold:
+    case CommandType::Wheel:
     case CommandType::Defaults:
       return true;
     default:
@@ -155,6 +157,10 @@ bool applyCommand(const Command& cmd, DetectionConfig& cfg, const char** error) 
       case CommandType::RadarThreshold:
         if (inRange(v, limits::kRadarThrLo, limits::kRadarThrHi) && isWhole(v)) next.radarThreshold = static_cast<uint8_t>(v);
         else err = "RTHR must be an integer 1-50";
+        break;
+      case CommandType::Wheel:
+        if (inRange(v, limits::kWheelMmLo, limits::kWheelMmHi) && isWhole(v)) next.wheelMm = static_cast<uint16_t>(v);
+        else err = "WHEEL must be an integer 1000-3000 (mm)";
         break;
       default:
         err = "not a setting";

@@ -31,8 +31,8 @@ RadarA_C4001_BLE/
 ├─ RadarA_C4001_BLE.ino   進入點：組裝 RadarApp，設定 CPU 80 MHz、看門狗
 ├─ AppConfig.h            編譯期設定：腳位、雷達設定、藍牙名稱與 UUID、輸出週期、kAllowBleConfig
 └─ src/
-   ├─ core/      純邏輯（可在電腦上測試）：DetectionConfig（10 項參數與範圍）、ThreatTracker（來車判斷）、MedianWindow
-   ├─ drivers/   C4001Protocol（解析 $DFDMD 資料框）、C4001Radar（非阻塞狀態機）、StatusLed
+   ├─ core/      純邏輯（可在電腦上測試）：DetectionConfig（11 項參數與範圍）、ThreatTracker（來車判斷）、WheelSpeed（自身車速）、MedianWindow
+   ├─ drivers/   C4001Protocol（解析 $DFDMD 資料框）、C4001Radar（非阻塞狀態機）、WheelSensor（輪速霍爾感測器中斷）、StatusLed
    ├─ comm/      BleLink（NUS、依 MTU 分段、指令佇列）、Telemetry（輸出格式）、CommandParser
    ├─ storage/   SettingsStore（NVS 命名空間 radarA）
    └─ app/       RadarApp：把以上串起來，處理 USB／藍牙指令
@@ -77,13 +77,17 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 
 ## 設定
 
-- **執行中可調**（存在 NVS，網頁「裝置」頁或指令修改）：`TEST`、`MINSPD`、`MINE`、`RANGE`、`SIGN`、`DTTC`、`DDIST`、`HOLD`、`CONFIRM`、`RTHR`（雷達偵測門檻，預設 5），範圍與預設見 [docs/PROTOCOL.md](../docs/PROTOCOL.md)。
-- **編譯期**（`AppConfig.h`）：腳位 16／17、雷達距離 0.3～20 m、藍牙名稱、MTU 247、遙測週期 200 ms。
+- **執行中可調**（存在 NVS，網頁「裝置」頁或指令修改）：`TEST`、`MINSPD`、`MINE`、`RANGE`、`SIGN`、`DTTC`、`DDIST`、`HOLD`、`CONFIRM`、`RTHR`（雷達偵測門檻，預設 5）、`WHEEL`（輪周長，預設 2105 mm），範圍與預設見 [docs/PROTOCOL.md](../docs/PROTOCOL.md)。
+- **編譯期**（`AppConfig.h`）：腳位（雷達 16／17、輪速感測器 27）、雷達距離 0.3～20 m、藍牙名稱、MTU 247、遙測週期 200 ms。
+
+### 自身車速（輪速感測器）
+
+3144 霍爾開關（VCC → V、GND → G、OUT → GPIO27）或磁簧開關（GPIO27 ↔ G），輻條上一顆磁鐵。`WheelSensor` 用下降緣中斷記下時間，`WheelSpeed` 算車速：輪周長 ÷ 最近兩圈的平均間隔，減速時用「距離上一圈已經過了多久」讓車速平順下降，3 秒沒有脈衝算停止。開機後收到第一個脈衝才開始在遙測送 `S`，沒接感測器時網頁不會顯示假的 0 km/h。
 - **安全**：`kAllowBleConfig = false` 時，藍牙只能讀資料，改設定與重開機只能從 USB。
 
 ## 測試
 
-`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯（203 項），涵蓋資料框解析、指令解析與範圍、輸出格式（含最長一行不超過緩衝區）、來車確認／分級／保持、換目標、雜訊與掉資料、速度交叉核對的各種情境（都卜勒折疊、飽和、報 0、`SIGN` 設反、加減速、反射點跳動）、C4001 實測行為（外插資料框、能量中位數），以及追蹤中目標（`TD`／`TV`）的回報。需要電腦端的 `g++`（例如 MinGW-w64）。
+`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯（232 項），涵蓋資料框解析、指令解析與範圍、輸出格式（含最長一行不超過緩衝區）、來車確認／分級／保持、換目標、雜訊與掉資料、速度交叉核對的各種情境（都卜勒折疊、飽和、報 0、`SIGN` 設反、加減速、反射點跳動）、C4001 實測行為（外插資料框、能量中位數），追蹤中目標（`TD`／`TV`）的回報，以及自身車速（輪速脈衝、防彈跳、減速與停止）。需要電腦端的 `g++`（例如 MinGW-w64）。
 
 ```powershell
 .\arduino.ps1 test

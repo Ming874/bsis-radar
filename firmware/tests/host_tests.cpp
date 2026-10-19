@@ -10,6 +10,7 @@
 #include "core/RangeKalman.h"
 #include "core/RangeRateWindow.h"
 #include "core/ThreatTracker.h"
+#include "core/WheelSpeed.h"
 #include "drivers/C4001Protocol.h"
 
 static int gChecks = 0;
@@ -589,6 +590,37 @@ static void testVelocityCrossCheck() {
   }
 }
 
+// ------------------------------------------------------------ 自身車速（輪速感測器）
+static void testWheelSpeed() {
+  printf("[WheelSpeed]\n");
+  const uint16_t c700 = 2105;  // 700×25C 輪周長（mm）
+  WheelSpeed w;
+  CHECK(!w.seen());
+  CHECK(w.speedKmh(1000, c700) == 0.0f);  // 沒接感測器
+
+  // 20 km/h：每圈 2.105 m ÷ 5.556 m/s ≈ 379 ms
+  CHECK(w.onPulse(1000));
+  CHECK(w.seen());
+  CHECK(w.speedKmh(1100, c700) == 0.0f);  // 只有一個脈衝：還不知道速度
+  for (uint32_t i = 1; i <= 5; i++) CHECK(w.onPulse(1000 + i * 379));
+  const uint32_t last = 1000 + 5 * 379;
+  CHECK_NEAR(w.speedKmh(last + 10, c700), 20.0f, 0.1f);
+  CHECK_NEAR(w.speedKmh(last + 10, 1500), 20.0f * 1500 / 2105, 0.1f);  // 輪周長不同 → 等比例
+
+  CHECK(!w.onPulse(last + 10));  // 間隔太短（雜訊、彈跳）：不採用，速度不變
+  CHECK_NEAR(w.speedKmh(last + 20, c700), 20.0f, 0.1f);
+
+  // 減速：下一圈還沒到，就用「已經過了多久」當間隔 → 2 倍時間時約剩一半
+  CHECK_NEAR(w.speedKmh(last + 758, c700), 10.0f, 0.1f);
+  CHECK(w.speedKmh(last + wheel_tuning::kStopMs + 1, c700) == 0.0f);  // 太久沒有脈衝：停止
+
+  // 停車後再出發：停車那段間隔不算，第二個脈衝才有速度
+  CHECK(w.onPulse(last + 5000));
+  CHECK(w.speedKmh(last + 5100, c700) == 0.0f);
+  CHECK(w.onPulse(last + 5000 + 758));  // 10 km/h
+  CHECK_NEAR(w.speedKmh(last + 5000 + 760, c700), 10.0f, 0.1f);
+}
+
 // ------------------------------------------------------------ 指令
 static void testCommands() {
   printf("[CommandParser]\n");
@@ -644,11 +676,18 @@ static void testCommands() {
   CHECK(!applyCommand(parseCommand("RTHR 51"), c, &err));
   CHECK(!applyCommand(parseCommand("RTHR 5.5"), c, &err));
   CHECK(c.radarThreshold == 50);  // 失敗時設定不變
+  CHECK(isConfigCommand(CommandType::Wheel));
+  CHECK(applyCommand(parseCommand("WHEEL 2070"), c, &err) && c.wheelMm == 2070);
+  CHECK(!applyCommand(parseCommand("WHEEL 999"), c, &err));
+  CHECK(!applyCommand(parseCommand("WHEEL 3001"), c, &err));
+  CHECK(!applyCommand(parseCommand("WHEEL 2105.5"), c, &err));
+  CHECK(c.wheelMm == 2070);
 
   CHECK(applyCommand(parseCommand("DEFAULTS"), c, &err));
   CHECK(c.testMode && c.approachSign == -1 && c.minEnergy == 0);
   CHECK(c.holdMs == 1000 && c.confirmHits == 3);
   CHECK(c.radarThreshold == 5);  // C4001 原廠預設
+  CHECK(c.wheelMm == 2105);      // 700×25C
   CHECK(c.isValid());
 
   DetectionConfig bad = DetectionConfig::defaults();
@@ -702,6 +741,12 @@ static void testTelemetry() {
   standing.radarOnline = false;  // 雷達離線時不送追蹤資料
   CHECK(formatTelemetry(standing, line, sizeof(line)) > 0);
   CHECK(strstr(line, "TD=") == nullptr);
+  CHECK(strstr(line, " S=") == nullptr);  // 沒接輪速感測器：不送自身車速
+
+  standing.hasOwnSpeed = true;  // 輪速感測器：雷達離線時照樣送，放在行尾
+  standing.ownSpeedKmh = 18.46f;
+  CHECK(formatTelemetry(standing, line, sizeof(line)) > 0);
+  CHECK(strstr(line, " VS=0 S=18.5\n") != nullptr);
 
   CHECK(formatTelemetry(s, line, 20) == 0);  // 空間不夠：不輸出半行
 
@@ -733,14 +778,16 @@ static void testTelemetry() {
   big.threat.hasTrack        = true;
   big.threat.trackDistanceM  = 500.0f;   // 夾在 99.99
   big.threat.trackClosingMps = -150.0f;  // 夾在 -99.99
+  big.hasOwnSpeed            = true;
+  big.ownSpeedKmh            = 5000.0f;  // 夾在 999.9
   char telLine[kTelemetryLineMax];
-  CHECK(formatTelemetry(big, telLine, sizeof(telLine)) > 0);
-  CHECK(strstr(telLine, " VS=5 RR=-99.99 TD=99.99 TV=-99.99\n") != nullptr);
-  CHECK(strlen(telLine) + strlen(" S=999.9") < kTelemetryLineMax);  // 加上 Radar B 的自身車速也放得下
+  CHECK(formatTelemetry(big, telLine, sizeof(telLine)) > 0);  // 最長的一行也放得下
+  CHECK(strstr(telLine, " VS=5 RR=-99.99 TD=99.99 TV=-99.99 S=999.9\n") != nullptr);
 
   CHECK(formatConfig(DetectionConfig::defaults(), "2.2.0", line, sizeof(line)) > 0);
   CHECK(strcmp(line,
-               "CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 FW=2.2.0\n") == 0);
+               "CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 WHEEL=2105 "
+               "FW=2.2.0\n") == 0);
   printf("  %s", line);
 }
 
@@ -750,6 +797,7 @@ int main() {
   testC4001Behaviour();
   testEstimators();
   testVelocityCrossCheck();
+  testWheelSpeed();
   testCommands();
   testTelemetry();
   printf("\n%d checks, %d failures\n", gChecks, gFailures);

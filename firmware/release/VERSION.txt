@@ -1,5 +1,5 @@
-﻿RadarA_C4001_BLE v2.3.0
-built   : 2026-10-16 02:00
+﻿RadarA_C4001_BLE v2.4.0
+built   : 2026-10-19 14:54
 board   : esp32:esp32:esp32 (ESP32 Dev Module)
 flash   : bootloader.bin@0x1000 partitions.bin@0x8000 boot_app0.bin@0xe000 firmware.bin@0x10000
-sha256  : 32211de96965a81c2f76664eb4c7cc08c5330ae50311507fa3fbe51ff15d123b (firmware.bin)
+sha256  : 3284513c208fd53a84da9508fdac0eca889f9240ab6d6bdce47e731acca4d87b (firmware.bin)

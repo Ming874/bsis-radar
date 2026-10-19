@@ -2,14 +2,14 @@
  * @file   AppConfig.h
  * @brief  【應用層】編譯期設定：腳位、雷達設定、藍牙、輸出週期。
  *
- * 執行中可調整的 10 項偵測參數（測試模式、速度/能量門檻、警示距離、危險 TTC、雷達偵測門檻…）不在這裡，
+ * 執行中可調整的 11 項參數（測試模式、速度/能量門檻、警示距離、危險 TTC、雷達偵測門檻、輪周長…）不在這裡，
  * 它們存在 NVS，用網頁「裝置」頁或序列埠指令修改，見 src/core/DetectionConfig.h。
  * 演算法內部參數（卡爾曼濾波、交叉核對閘門）見 src/core/ThreatTracker.h 與 VelocityCheck.h。
  */
 #pragma once
 #include <stdint.h>
 
-#define FW_VERSION "2.3.0"
+#define FW_VERSION "2.4.0"
 
 namespace app {
 
@@ -18,6 +18,9 @@ namespace app {
 constexpr int8_t   kPinRadarRx   = 16;      // ESP32 接收腳（接雷達 TX）
 constexpr int8_t   kPinRadarTx   = 17;      // ESP32 傳送腳（接雷達 RX）
 constexpr int8_t   kPinStatusLed = 2;       // 板載藍色 LED
+// 輪速感測器（3144 霍爾開關：VCC → V、GND → G、OUT → GPIO27；或磁簧開關兩端接 GPIO27 與 G），-1 = 不使用。
+// 沒接時腳位由內建上拉維持高電位，不會有假脈衝，網頁也不會顯示自身車速
+constexpr int8_t   kPinWheelSensor = 27;
 constexpr uint32_t kRadarBaud    = 9600;    // C4001 固定 9600
 constexpr uint32_t kUsbBaud      = 115200;  // 序列埠監控視窗鮑率
 

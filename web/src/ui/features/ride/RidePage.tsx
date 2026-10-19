@@ -205,7 +205,7 @@ export function RidePage() {
 
         {telemetry?.ownSpeedKmh != null && (
           <div className={`px-4 py-3 ${WIDGET}`}>
-            <div className="text-caption font-semibold text-ink-3">自身車速（Radar B）</div>
+            <div className="text-caption font-semibold text-ink-3">自身車速</div>
             <div className="tabular font-rounded text-[2.25rem] leading-tight font-semibold tracking-tight text-ink">
               {telemetry.ownSpeedKmh.toFixed(0)} <span className="text-callout font-medium text-ink-2">km/h</span>
             </div>

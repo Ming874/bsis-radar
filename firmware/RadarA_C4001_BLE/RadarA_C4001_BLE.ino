@@ -1,7 +1,7 @@
 /*!
  * @file    RadarA_C4001_BLE.ino
  * @brief   Radar A：自行車後方來車偵測（DFRobot C4001 25m，UART）＋ 藍牙 BLE 輸出
- * @version 2.3.0
+ * @version 2.4.0
  *
  * 程式架構（上層呼叫下層，下層不知道上層）：
  *   應用層  RadarA_C4001_BLE.ino     只負責接線與啟動
@@ -12,14 +12,17 @@
  *           src/comm/CommandParser   文字指令解析與驗證（藍牙、序列埠共用）
  *   核心層  src/core/ThreatTracker   來車判斷：篩選 → 確認 → 追蹤 → 分級 → 保持
  *           src/core/DetectionConfig 執行期參數與範圍檢查
+ *           src/core/WheelSpeed      由輪速脈衝算自身車速
  *   儲存層  src/storage/SettingsStore 參數存 NVS，斷電不消失
  *   驅動層  src/drivers/C4001Radar   雷達非阻塞驅動：初始化狀態機、心跳、斷線自動重試
  *           src/drivers/C4001Protocol 資料框解析；src/drivers/StatusLed 狀態燈
+ *           src/drivers/WheelSensor  輪速感測器（霍爾開關）中斷
  * 核心層、協定解析、指令解析是純 C++，可在電腦上跑單元測試（firmware/tests）。
  *
  * 硬體接線（C4001 25m 版只有 UART）：
  *   C4001 VIN → 擴充板 V    C4001 GND → 擴充板 G
  *   C4001 TX  → GPIO16      C4001 RX  → GPIO17     C4001 OUT → 不接
+ * 輪速感測器（選用，算自身車速）：3144 霍爾開關 VCC → V、GND → G、OUT → GPIO27（磁鐵裝在輻條上）
  *
  * 手機：Android Chrome 開啟網頁儀表板（Web Bluetooth）連線「RadarA-ESP32」；
  *       也可用 nRF Connect、Serial Bluetooth Terminal 等 BLE 序列 App 看資料、送指令。
@@ -40,6 +43,7 @@ static RadarApp radarApp({
     {app::kPinRadarRx, app::kPinRadarTx, app::kRadarBaud, app::kRadarMinRangeM, app::kRadarMaxRangeM},
     {app::kBleName, app::kNusServiceUuid, app::kNusRxUuid, app::kNusTxUuid, app::kBleMtu},
     app::kPinStatusLed,
+    app::kPinWheelSensor,
     app::kTelemetryPeriodMs,
     app::kDebugPeriodMs,
     FW_VERSION,

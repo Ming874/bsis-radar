@@ -25,7 +25,7 @@ export interface Telemetry {
   rawSpeedMps: number | null; // RV：雷達原始速度（雷達自己的正負號）
   energy: number; // E：反射能量（追蹤中目標最近 5 筆偵測的中位數）
   uptimeS: number; // T：ESP32 開機秒數
-  ownSpeedKmh: number | null; // S：自身車速（隊友的 Radar B，選用）
+  ownSpeedKmh: number | null; // S：自身車速（輪子上的霍爾感測器，選用；沒接時韌體不送）
   velocitySource: VelocitySource | null; // VS：速度來源（韌體 2.1 起；舊韌體為 null）
   rangeRateMps: number | null; // RR：由距離斜率算出的接近速度（正 = 接近），資料不足時為 null
   trackDistanceM: number | null; // TD：雷達目前追蹤的目標距離（不論是不是來車；韌體 2.3 起，沒有追蹤時 null）
@@ -45,6 +45,7 @@ export interface DeviceConfig {
   holdMs: number; // HOLD
   confirmHits: number; // CONFIRM
   radarThreshold: number | null; // RTHR：C4001 雷達本身的偵測門檻（韌體 2.2 起；舊韌體不能調，為 null）
+  wheelMm: number | null; // WHEEL：輪周長 mm，算自身車速用（韌體 2.4 起；舊韌體為 null）
   firmware: string; // FW
 }
 
@@ -68,7 +69,8 @@ export type DeviceCommand =
   | { type: 'dangerDist'; meters: number }
   | { type: 'hold'; ms: number }
   | { type: 'confirm'; hits: number }
-  | { type: 'radarThreshold'; value: number };
+  | { type: 'radarThreshold'; value: number }
+  | { type: 'wheel'; mm: number };
 
 /** 一次「來車事件」：從開始警示到解除 */
 export interface ApproachEvent {

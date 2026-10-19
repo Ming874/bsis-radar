@@ -2,7 +2,7 @@
  * 【裝置】ESP32 偵測參數的統一定義：名稱、單位、範圍、步進、顯示方式、對應指令、說明。
  * 列表與編輯面板都由這份定義產生，新增參數只要改這裡。
  */
-import { COMMAND_LIMITS, DEFAULT_DEVICE_CONFIG, DEFAULT_RADAR_THRESHOLD } from '../../../domain/protocol';
+import { COMMAND_LIMITS, DEFAULT_DEVICE_CONFIG, DEFAULT_RADAR_THRESHOLD, DEFAULT_WHEEL_MM } from '../../../domain/protocol';
 import type { DeviceCommand } from '../../../domain/types';
 import { mpsToKmh } from '../../../domain/units';
 import { PARAM_HELP, type HelpText } from '../../content/help';
@@ -15,7 +15,8 @@ export type NumericKey =
   | 'dangerDistM'
   | 'holdMs'
   | 'confirmHits'
-  | 'radarThreshold';
+  | 'radarThreshold'
+  | 'wheelMm';
 export type ParamKey = NumericKey | 'approachSign';
 
 export interface NumericParam {
@@ -152,6 +153,20 @@ export const NUMERIC_PARAMS: Record<NumericKey, NumericParam> = {
     toCommand: (v) => ({ type: 'radarThreshold', value: v }),
     defaultValue: DEFAULT_RADAR_THRESHOLD,
   },
+  wheelMm: {
+    key: 'wheelMm',
+    label: '輪周長',
+    help: PARAM_HELP.wheelMm,
+    unit: 'mm',
+    ...L.wheelMm,
+    step: 5,
+    decimals: 0,
+    slider: false,
+    format: (v) => `${v} mm`,
+    hint: (v) => `約 ${(v / 1000).toFixed(3)} m・常見：700×25C 2105、26×1.95 2050、20×1.75 1515`,
+    toCommand: (v) => ({ type: 'wheel', mm: v }),
+    defaultValue: DEFAULT_WHEEL_MM,
+  },
 };
 
 export const SIGN_OPTIONS: Array<{ value: -1 | 0 | 1; label: string; description: string }> = [
@@ -167,4 +182,5 @@ export const PARAM_GROUPS: Array<{ title: string; footer: string; keys: ParamKey
   { title: '偵測條件', footer: '什麼樣的目標算是「來車」。', keys: ['minSpeedMps', 'minEnergy', 'approachSign'] },
   { title: '警示等級', footer: '什麼時候開始提醒、什麼時候算危險。', keys: ['warnRangeM', 'dangerTtcS', 'dangerDistM'] },
   { title: '穩定性', footer: '過濾雜訊與警示保持。', keys: ['confirmHits', 'holdMs'] },
+  { title: '自身車速', footer: '輪子上的霍爾感測器量車速，輪周長要和你的輪胎一致。沒接感測器時不會顯示車速。', keys: ['wheelMm'] },
 ];

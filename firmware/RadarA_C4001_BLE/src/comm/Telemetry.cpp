@@ -30,7 +30,11 @@ size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
              clampf(t.trackClosingMps, -99.99f, 99.99f));
   }
 
-  const int n = snprintf(out, cap, "R=%d W=%d L=%d D=%.2f V=%.2f TTC=%.1f N=%u RD=%.2f RV=%.2f E=%lu T=%lu VS=%u%s%s\n",
+  // 自身車速和雷達無關：雷達離線時照樣送
+  char own[16] = "";
+  if (s.hasOwnSpeed) snprintf(own, sizeof(own), " S=%.1f", clampf(s.ownSpeedKmh, 0.0f, 999.9f));
+
+  const int n = snprintf(out, cap, "R=%d W=%d L=%d D=%.2f V=%.2f TTC=%.1f N=%u RD=%.2f RV=%.2f E=%lu T=%lu VS=%u%s%s%s\n",
                          online ? 1 : 0,
                          t.warning() ? 1 : 0,
                          static_cast<int>(t.level),
@@ -44,13 +48,14 @@ size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
                          static_cast<unsigned long>(s.uptimeS),
                          online ? static_cast<unsigned>(t.velocitySource) : 0U,
                          rr,
-                         track);
+                         track,
+                         own);
   return finish(n, cap);
 }
 
 size_t formatConfig(const DetectionConfig& c, const char* firmwareVersion, char* out, size_t cap) {
   const int n = snprintf(out, cap,
-                         "CFG TEST=%d MINSPD=%.2f MINE=%lu RANGE=%.1f SIGN=%d DTTC=%.1f DDIST=%.1f HOLD=%u CONFIRM=%u RTHR=%u FW=%s\n",
+                         "CFG TEST=%d MINSPD=%.2f MINE=%lu RANGE=%.1f SIGN=%d DTTC=%.1f DDIST=%.1f HOLD=%u CONFIRM=%u RTHR=%u WHEEL=%u FW=%s\n",
                          c.testMode ? 1 : 0,
                          c.minSpeedMps,
                          static_cast<unsigned long>(c.minEnergy),
@@ -61,6 +66,7 @@ size_t formatConfig(const DetectionConfig& c, const char* firmwareVersion, char*
                          static_cast<unsigned>(c.holdMs),
                          static_cast<unsigned>(c.confirmHits),
                          static_cast<unsigned>(c.radarThreshold),
+                         static_cast<unsigned>(c.wheelMm),
                          firmwareVersion);
   return finish(n, cap);
 }

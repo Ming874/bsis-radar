@@ -96,8 +96,8 @@ describe('parseLine：遙測', () => {
 });
 
 describe('parseLine：設定與回覆', () => {
-  it('解析 CFG（全部 10 個參數）', () => {
-    const r = parseLine('CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=2.0 DDIST=5.0 HOLD=1500 CONFIRM=2 RTHR=8 FW=2.2.0');
+  it('解析 CFG（全部 11 個參數）', () => {
+    const r = parseLine('CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=2.0 DDIST=5.0 HOLD=1500 CONFIRM=2 RTHR=8 WHEEL=2050 FW=2.4.0');
     expect(r).toEqual({
       kind: 'config',
       config: {
@@ -111,15 +111,16 @@ describe('parseLine：設定與回覆', () => {
         holdMs: 1500,
         confirmHits: 2,
         radarThreshold: 8,
-        firmware: '2.2.0',
+        wheelMm: 2050,
+        firmware: '2.4.0',
       },
     });
   });
 
-  it('較舊的 CFG 沒有新欄位時用預設值；雷達偵測門檻是 null（舊韌體不能調）', () => {
+  it('較舊的 CFG 沒有新欄位時用預設值；雷達偵測門檻、輪周長是 null（舊韌體不能調）', () => {
     const r = parseLine('CFG TEST=0 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 FW=1.9');
     if (r.kind !== 'config') throw new Error('not config');
-    expect(r.config).toMatchObject({ dangerTtcS: 1.5, dangerDistM: 4, holdMs: 1000, confirmHits: 3, radarThreshold: null });
+    expect(r.config).toMatchObject({ dangerTtcS: 1.5, dangerDistM: 4, holdMs: 1000, confirmHits: 3, radarThreshold: null, wheelMm: null });
   });
 
   it('CFG 缺欄位或 SIGN 不合法時不採用', () => {
@@ -148,6 +149,7 @@ describe('buildCommand', () => {
     expect(buildCommand({ type: 'hold', ms: 1500 })).toBe('HOLD 1500');
     expect(buildCommand({ type: 'confirm', hits: 2 })).toBe('CONFIRM 2');
     expect(buildCommand({ type: 'radarThreshold', value: 10 })).toBe('RTHR 10');
+    expect(buildCommand({ type: 'wheel', mm: 2050 })).toBe('WHEEL 2050');
   });
 
   it('數值超出範圍時丟出錯誤，不送出', () => {
@@ -162,6 +164,8 @@ describe('buildCommand', () => {
     expect(() => buildCommand({ type: 'radarThreshold', value: 0 })).toThrow(RangeError);
     expect(() => buildCommand({ type: 'radarThreshold', value: 51 })).toThrow(RangeError);
     expect(() => buildCommand({ type: 'radarThreshold', value: 5.5 })).toThrow(RangeError);
+    expect(() => buildCommand({ type: 'wheel', mm: 999 })).toThrow(RangeError);
+    expect(() => buildCommand({ type: 'wheel', mm: 2105.5 })).toThrow(RangeError);
   });
 
   it('每個指令都小於 20 bytes（BLE 一次寫入）', () => {
@@ -181,21 +185,23 @@ describe('diffConfig', () => {
     holdMs: 1000,
     confirmHits: 3,
     radarThreshold: 5,
-    firmware: '2.2.0',
+    wheelMm: 2105,
+    firmware: '2.4.0',
   };
 
   it('只送有改變的欄位', () => {
     expect(diffConfig(base, { ...base })).toEqual([]);
-    expect(diffConfig(base, { ...base, testMode: false, minEnergy: 30000, holdMs: 2000, radarThreshold: 10 })).toEqual([
+    expect(diffConfig(base, { ...base, testMode: false, minEnergy: 30000, holdMs: 2000, radarThreshold: 10, wheelMm: 2050 })).toEqual([
       { type: 'testMode', enabled: false },
       { type: 'minEnergy', value: 30000 },
       { type: 'hold', ms: 2000 },
       { type: 'radarThreshold', value: 10 },
+      { type: 'wheel', mm: 2050 },
     ]);
   });
 
-  it('目標設定沒有雷達偵測門檻（舊韌體）時不送 RTHR', () => {
-    expect(diffConfig(base, { ...base, radarThreshold: null })).toEqual([]);
+  it('目標設定沒有雷達偵測門檻、輪周長（舊韌體）時不送 RTHR／WHEEL', () => {
+    expect(diffConfig(base, { ...base, radarThreshold: null, wheelMm: null })).toEqual([]);
   });
 
 });

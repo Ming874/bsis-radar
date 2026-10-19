@@ -12,6 +12,7 @@ DetectionConfig DetectionConfig::defaults() {
   c.holdMs       = 1000;    // 車子剛超過去、還在旁邊時繼續警示
   c.confirmHits  = 3;       // 約 0.3 秒（10 Hz）就能確認，又能擋掉單筆雜訊
   c.radarThreshold = 5;     // C4001 原廠預設。舊版用 30：實測坐在 0.5 m 的人完全偵測不到（docs/ALGORITHM.md §10）
+  c.wheelMm        = 2105;  // 700×25C 公路車輪胎；其他尺寸在網頁改
   return c;
 }
 
@@ -26,5 +27,6 @@ bool DetectionConfig::isValid() const {
   if (holdMs < limits::kHoldLo || holdMs > limits::kHoldHi) return false;
   if (confirmHits < limits::kConfirmLo || confirmHits > limits::kConfirmHi) return false;
   if (radarThreshold < limits::kRadarThrLo || radarThreshold > limits::kRadarThrHi) return false;
+  if (wheelMm < limits::kWheelMmLo || wheelMm > limits::kWheelMmHi) return false;
   return true;
 }

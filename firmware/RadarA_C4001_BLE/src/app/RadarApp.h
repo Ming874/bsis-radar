@@ -4,6 +4,7 @@
  *
  * 每次 loop 的資料流：
  *   C4001Radar（收資料）→ ThreatTracker（判斷）→ Telemetry（格式化）→ BleLink（送手機）
+ *   WheelSensor（輪速脈衝）→ WheelSpeed（自身車速）→ Telemetry 的 S 欄位
  *   BleLink / 序列埠（收指令）→ CommandParser（解析驗證）→ SettingsStore（存 NVS）
  */
 #pragma once
@@ -12,8 +13,10 @@
 #include "../comm/BleLink.h"
 #include "../core/DetectionConfig.h"
 #include "../core/ThreatTracker.h"
+#include "../core/WheelSpeed.h"
 #include "../drivers/C4001Radar.h"
 #include "../drivers/StatusLed.h"
+#include "../drivers/WheelSensor.h"
 #include "../storage/SettingsStore.h"
 
 class RadarApp {
@@ -24,6 +27,7 @@ class RadarApp {
     C4001Radar::Settings radar;
     BleLink::Config     ble;
     int8_t              ledPin;
+    int8_t              wheelPin;  // 輪速感測器（霍爾開關），-1 = 不使用
     uint32_t            telemetryPeriodMs;
     uint32_t            debugPeriodMs;
     const char*         firmwareVersion;
@@ -55,6 +59,8 @@ class RadarApp {
   BleLink         ble_;
   BleLink::Config bleConfig_;
   StatusLed       led_;
+  WheelSensor     wheel_;
+  WheelSpeed      wheelSpeed_;
   SettingsStore   store_;
   DetectionConfig config_;
 

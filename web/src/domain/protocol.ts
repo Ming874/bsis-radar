@@ -3,9 +3,9 @@
  *
  * ESP32 → 網頁（每行以 '\n' 結尾）：
  *   R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35 VS=2 RR=6.11 TD=8.42 TV=6.20
- *   CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 FW=2.2.0
+ *   CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 WHEEL=2105 FW=2.4.0
  *   OK saved / ERR <原因>
- * 網頁 → ESP32：GET、TEST、MINSPD、MINE、RANGE、SIGN、DTTC、DDIST、HOLD、CONFIRM、RTHR、DEFAULTS、REBOOT
+ * 網頁 → ESP32：GET、TEST、MINSPD、MINE、RANGE、SIGN、DTTC、DDIST、HOLD、CONFIRM、RTHR、WHEEL、DEFAULTS、REBOOT
  */
 import type { AlertLevel, DeviceCommand, DeviceConfig, ParsedLine, VelocitySource } from './types';
 
@@ -19,10 +19,14 @@ export const COMMAND_LIMITS = {
   holdMs: { min: 200, max: 5000 },
   confirmHits: { min: 1, max: 6 },
   radarThreshold: { min: 1, max: 50 },
+  wheelMm: { min: 1000, max: 3000 },
 } as const;
 
 /** C4001 的偵測門檻原廠預設值（韌體 2.2 起的預設；舊韌體固定用 30） */
 export const DEFAULT_RADAR_THRESHOLD = 5;
+
+/** 輪周長預設值（mm）：700×25C 公路車輪胎 */
+export const DEFAULT_WHEEL_MM = 2105;
 
 /** 韌體預設值（DetectionConfig::defaults） */
 export const DEFAULT_DEVICE_CONFIG: Omit<DeviceConfig, 'firmware'> = {
@@ -36,6 +40,7 @@ export const DEFAULT_DEVICE_CONFIG: Omit<DeviceConfig, 'firmware'> = {
   holdMs: 1000,
   confirmHits: 3,
   radarThreshold: DEFAULT_RADAR_THRESHOLD,
+  wheelMm: DEFAULT_WHEEL_MM,
 };
 
 /**
@@ -142,6 +147,7 @@ function parseConfig(text: string): ParsedLine {
       confirmHits: num(p, 'CONFIRM') ?? d.confirmHits,
       // 2.2 以前的韌體沒有 RTHR（雷達門檻寫死、不能調），不能用預設值假裝
       radarThreshold: num(p, 'RTHR') ?? null,
+      wheelMm: num(p, 'WHEEL') ?? null,
       firmware: p.get('FW') ?? '?',
     },
   };
@@ -217,6 +223,10 @@ export function buildCommand(cmd: DeviceCommand): string {
       assertRange(cmd.value, L.radarThreshold, '雷達偵測門檻');
       assertInteger(cmd.value, '雷達偵測門檻');
       return `RTHR ${cmd.value}`;
+    case 'wheel':
+      assertRange(cmd.mm, L.wheelMm, '輪周長');
+      assertInteger(cmd.mm, '輪周長');
+      return `WHEEL ${cmd.mm}`;
   }
 }
 
@@ -235,5 +245,6 @@ export function diffConfig(current: DeviceConfig, next: DeviceConfig): DeviceCom
   if (next.radarThreshold !== null && current.radarThreshold !== next.radarThreshold) {
     cmds.push({ type: 'radarThreshold', value: next.radarThreshold });
   }
+  if (next.wheelMm !== null && current.wheelMm !== next.wheelMm) cmds.push({ type: 'wheel', mm: next.wheelMm });
   return cmds;
 }
