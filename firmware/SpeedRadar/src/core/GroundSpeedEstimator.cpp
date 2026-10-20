@@ -237,7 +237,7 @@ void GroundSpeedEstimator::correct(float z, float r) {
   odoV_ = v_;  // 量測更新是瞬間的修正，不算進里程積分
 }
 
-// 量測雜訊的初值：雷達本身的速度解析 + 與速度成正比的波束分散（docs/ALGORITHM.md §5）
+// 量測雜訊的初值：雷達本身的速度解析 + 與速度成正比的波束分散（docs/ALGORITHM.md §6.3）
 float GroundSpeedEstimator::nominalVariance(float speed, const SpeedConfig& cfg) const {
   const float scale  = cfg.calibration / cosf(cfg.angleDeg * kDegToRad);
   const float base   = kSigmaRadial * scale;
@@ -378,7 +378,7 @@ void GroundSpeedEstimator::handleMeasurement(float g, uint32_t tMs, const SpeedC
   const float gate = kGateSigma * sqrtf(p00_ + r) + kGateFloorMps;
 
   if (fabsf(nu) <= gate) {
-    // 里程用量測本身積分：濾波後速度在急煞時會落後，直接積分會多算距離（docs/ALGORITHM.md §6）。
+    // 里程用量測本身積分：濾波後速度在急煞時會落後，直接積分會多算距離（docs/ALGORITHM.md §6.5）。
     // 兩筆量測之間已經用預測速度積分過，把這一筆的創新 × 資料框間隔加回去，這段就等於用量測值積分
     const uint32_t gapMs = tMs - lastAcceptMs_;
     const double   dt    = (gapMs > 150 ? 100 : gapMs) / 1000.0;

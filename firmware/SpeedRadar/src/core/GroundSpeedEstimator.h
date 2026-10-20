@@ -27,7 +27,7 @@ constexpr float kGateMaxDeg        = 85.0f;  // 正下方附近都卜勒趨近 0
 constexpr float kRangeMarginM      = 0.10f;  // 距離雜訊的餘裕
 constexpr float kRadarMinRangeM    = 0.30f;  // C4001 最近可設定距離
 constexpr float kRadarMaxRangeM    = 25.0f;
-constexpr float kRadarMinMaxRangeM = 2.40f;  // C4001 的最遠距離設定不可小於這個值（docs/ALGORITHM.md §2）
+constexpr float kRadarMinMaxRangeM = 2.40f;  // 保守下限：DFRobot 函式庫要求最遠距離 ≥ 2.4 m；規格書只要求大於最近距離（docs/ALGORITHM.md §2.1）
 
 // 徑向速度（上限是執行期參數 VMAX，見 SpeedConfig）
 constexpr float    kLimitMarginMps     = 0.05f;   // 原始值離上限這麼近就不採用：截斷的雷達會一直停在這裡
@@ -45,7 +45,7 @@ constexpr uint8_t  kAcquireFrames     = 3;
 constexpr float    kMoveMps           = 0.30f;  // 低於這個速度不算在動
 constexpr float    kStopMps           = 1.20f;  // 失去回波時（外推）速度低於這個值，視為正在停車
 
-// 卡爾曼濾波（docs/ALGORITHM.md §5）
+// 卡爾曼濾波（docs/ALGORITHM.md §6.3）
 // 白雜訊加加速度的譜密度 q（m²/s⁵）：巡航時用小的（平順），偵測到加減速時切換成大的（跟得上）。
 // 偵測方式：正規化創新平方 ε = ν² / S 的指數平均超過門檻（Bar-Shalom 的 adjustable level process noise）
 constexpr float   kJerkNoise         = 0.15f;

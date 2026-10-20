@@ -2,11 +2,11 @@
 
 SpeedConfig SpeedConfig::defaults() {
   SpeedConfig c;
-  c.angleDeg       = 45.0f;  // 文獻常用 30～45°；45° 時角度誤差 1° ≈ 速度誤差 1.7%（docs/ALGORITHM.md §3）
+  c.angleDeg       = 45.0f;  // 文獻常用 35～45°；45° 時角度誤差 1° ≈ 速度誤差 1.75%（docs/ALGORITHM.md §3.3、§4）
   c.heightM        = 0.70f;  // 後貨架尾端的典型高度；請實際量測
   c.direction      = 1;      // 雷達朝後、斜向下照地面
   c.model          = SpeedModel::FixedAngle;
-  c.calibration    = 1.0f;   // 未校正；做過一次距離校正後通常落在 1.0～1.4（波束寬造成的低估，§4）
+  c.calibration    = 1.0f;   // 未校正；校正後通常約 1.1～1.4（寬波束的路面回波偏向正下方，讀值偏低，docs/ALGORITHM.md §3.2）
   c.radarThreshold = 5;      // C4001 原廠預設
   c.wheelMm        = 2105;   // 700×25C
   // 規格表寫 0.1～3 m/s、資料框說明寫 0～10 m/s；兩筆獨立觀察都停在約 3.2～3.28 m/s，

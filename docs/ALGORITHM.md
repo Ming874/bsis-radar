@@ -372,7 +372,7 @@ CAL = Σ 真實距離 / Σ (雷達距離 / 當時的 CAL)
 
 ### 8.3 驗收
 
-步驟與合格標準見 [GETTING_STARTED.md](GETTING_STARTED.md) §9。
+步驟與合格標準見 [GETTING_STARTED.md](GETTING_STARTED.md) §10。
 
 ## 9. 模擬結果
 
