@@ -1,51 +1,118 @@
 /**
- * 【外框】頂端列：品牌 + 連線狀態膠囊（點了打開連線面板）。電腦版橫跨整個畫面，下方接左側導覽列。
+ * 【UI 層】頂端列：產品名稱、連線狀態（點了看連線詳情與中斷 / 重新連線）。
  */
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useRadar } from '../../application/container';
-import { FOCUS_RING, RadarIcon, StatusDot, type DotState } from '../kit';
-import { ConnectionSheet } from './ConnectionSheet';
+import { actions, capabilities, isDemo, useRadar } from '../../application/container';
+import { selectLink } from '../../application/selectors';
+import { formatDuration } from '../../domain/units';
+import { Button, Dialog, FOCUS_RING, KeyValue, LogoMark, StatusDot } from '../kit';
+
+function ConnectionDialog({ onClose }: { onClose: () => void }) {
+  const s = useRadar(
+    useShallow((r) => ({
+      connection: r.connection,
+      stale: r.stale,
+      telemetry: r.telemetry,
+      legacyFirmware: r.legacyFirmware,
+      firmware: r.config?.firmware ?? r.legacyFirmware,
+      frameRateHz: r.frameRateHz,
+    })),
+  );
+  const link = selectLink(s);
+  const connected = s.connection.status === 'connected';
+  const busy = s.connection.status === 'connecting' || s.connection.status === 'reconnecting';
+  return (
+    <Dialog
+      title="連線"
+      onClose={onClose}
+      footer={
+        connected || busy ? (
+          <Button
+            variant="danger"
+            onClick={() => {
+              void actions.disconnect();
+              onClose();
+            }}
+          >
+            中斷連線
+          </Button>
+        ) : (
+          <>
+            {capabilities.knownDevices && (
+              <Button
+                onClick={() => {
+                  void actions.reconnectKnownDevice();
+                  onClose();
+                }}
+              >
+                連回上次的裝置
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              disabled={!capabilities.bluetooth}
+              onClick={() => {
+                void actions.connect();
+                onClose();
+              }}
+            >
+              連線
+            </Button>
+          </>
+        )
+      }
+    >
+      <div className="-mx-4 -my-4">
+        <KeyValue
+          rows={[
+            {
+              label: '狀態',
+              value: (
+                <span className="inline-flex items-center gap-2 font-sans">
+                  <StatusDot tone={link.tone} />
+                  {link.label}
+                </span>
+              ),
+            },
+            { label: '裝置', value: s.connection.deviceName ?? '—' },
+            { label: '韌體', value: s.firmware ? `v${s.firmware}` : '—' },
+            { label: 'ESP32 運作時間', value: s.telemetry ? formatDuration(s.telemetry.uptimeS) : '—' },
+            { label: '雷達資料框', value: s.frameRateHz === null ? '—' : s.frameRateHz.toFixed(1), unit: s.frameRateHz === null ? undefined : 'Hz' },
+          ]}
+        />
+      </div>
+      {link.detail && <p className="mt-3 text-label text-muted">{link.detail}</p>}
+    </Dialog>
+  );
+}
 
 export function TopBar() {
-  const { status, stale } = useRadar(useShallow((s) => ({ status: s.connection.status, stale: s.stale })));
   const [open, setOpen] = useState(false);
-  const close = useCallback(() => setOpen(false), []);
-
-  const [dot, label]: [DotState, string] =
-    status === 'connected'
-      ? stale
-        ? ['error', '資料中斷']
-        : ['ok', '已連線']
-      : status === 'connecting'
-        ? ['busy', '連線中']
-        : status === 'reconnecting'
-          ? ['busy', '重新連線']
-          : ['off', '未連線'];
-
+  const link = useRadar(
+    useShallow((r) => selectLink({ connection: r.connection, stale: r.stale, telemetry: r.telemetry, legacyFirmware: r.legacyFirmware })),
+  );
+  const deviceName = useRadar((r) => r.connection.deviceName);
   return (
-    <header className="sticky top-0 z-30 border-b border-line/80 bg-surface/85 pt-[env(safe-area-inset-top)] backdrop-blur-xl backdrop-saturate-150">
-      <div className="mx-auto flex h-14 max-w-xl items-center justify-between gap-3 px-4 lg:max-w-none lg:px-5">
+    <header className="fixed inset-x-0 top-0 z-30 border-b border-line bg-panel pt-[env(safe-area-inset-top)]">
+      <div className="flex h-14 items-center justify-between gap-3 px-4 lg:px-5">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-control bg-accent text-white shadow-sm">
-            <span aria-hidden className="absolute inset-0 bg-linear-to-b from-white/25 to-transparent" />
-            <RadarIcon className="relative h-5 w-5" />
-          </span>
-          <span className="truncate text-title font-bold tracking-tight text-ink">Radar A</span>
-          <span aria-hidden className="hidden h-5 w-px bg-line lg:block" />
-          <span className="hidden truncate text-callout text-ink-2 lg:block">後方來車警示</span>
+          <LogoMark className="h-7 w-7 text-accent-strong" />
+          <span className="text-value font-semibold tracking-tight text-fg">BSIS 測速</span>
+          <span className="hidden text-label text-subtle sm:inline">毫米波雷達對地測速</span>
+          {isDemo && <span className="rounded-sm border border-warn/50 px-1.5 py-0.5 text-[11px] text-warn">示範資料</span>}
         </div>
         <button
           type="button"
           onClick={() => setOpen(true)}
-          aria-label={`連線狀態：${label}，點一下管理連線`}
-          className={`flex h-9 shrink-0 items-center gap-2 rounded-full border border-line bg-surface px-3.5 text-callout font-semibold text-ink shadow-sm transition hover:bg-fill ${FOCUS_RING}`}
+          className={`flex h-8 min-w-0 items-center gap-2 rounded-md border border-line-strong px-3 text-body text-fg hover:bg-hover ${FOCUS_RING}`}
         >
-          <StatusDot state={dot} />
-          {label}
+          <StatusDot tone={link.tone} />
+          <span className="truncate">{link.label}</span>
+          {link.tone === 'ok' && deviceName && <span className="hidden truncate text-muted sm:inline">· {deviceName}</span>}
         </button>
       </div>
-      {open && <ConnectionSheet onClose={close} />}
+      {open && <ConnectionDialog onClose={() => setOpen(false)} />}
     </header>
   );
 }

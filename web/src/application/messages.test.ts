@@ -15,7 +15,7 @@ describe('describeConnectionError', () => {
   it('其他同樣叫 NotFoundError 的錯誤也要提示', () => {
     expect(describeConnectionError(domError('NotFoundError', 'Bluetooth adapter not available.'))).toContain('藍牙沒有開啟');
     expect(describeConnectionError(domError('NotFoundError', 'Bluetooth permission has been blocked.'))).toContain('權限被封鎖');
-    expect(describeConnectionError(domError('NotFoundError', 'No Services matching UUID 6e400001 found in Device.'))).toContain('RadarA-ESP32');
+    expect(describeConnectionError(domError('NotFoundError', 'No Services matching UUID 6e400001 found in Device.'))).toContain('BSIS-Speed');
     expect(describeConnectionError(domError('NotFoundError', 'something new'))).toContain('連線失敗');
   });
 
@@ -28,7 +28,9 @@ describe('describeConnectionError', () => {
 describe('describeAck', () => {
   it('翻譯 ESP32 的回覆', () => {
     expect(describeAck(true, 'saved')).toContain('已儲存');
-    expect(describeAck(false, 'RANGE must be 1-20')).toContain('1 ～ 20');
+    expect(describeAck(false, 'ANGLE must be 15-75 (deg)')).toContain('15° ～ 75°');
+    expect(describeAck(false, 'CAL must be 0.5-2.0')).toContain('0.5 ～ 2.0');
+    expect(describeAck(false, 'something else')).toContain('something else');
     expect(describeAck(false, 'settings over Bluetooth are disabled, use USB')).toContain('USB');
   });
 });

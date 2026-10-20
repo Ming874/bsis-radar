@@ -5,195 +5,116 @@
 
 /*
  * ── 設計基準（Design Tokens）──────────────────────────────────────────
- * 配色參考 Cloudflare：白底、淺灰頁面、品牌橘作為主要操作色。
- * 全部元件只用這些語意化名稱（bg-surface、text-ink-2、border-line…），
- * 深淺色只在這裡切換變數，不在元件裡寫 dark: 顏色。
+ * 儀表風格：中性灰階為主，只有一個重點色（藍）用在可操作元件與雷達資料；
+ * 綠／黃／紅只表示狀態。1 px 邊框、小圓角、不用陰影與漸層。
+ * 元件只用這些語意化名稱（bg-panel、text-muted、border-line…），深淺色只在這裡切換。
  */
 @theme inline {
-  --color-canvas: var(--ds-canvas); /* 頁面底色 */
-  --color-surface: var(--ds-surface); /* 卡片、列表 */
-  --color-fill: var(--ds-fill); /* 輸入框、軌道、次要按鈕 */
-  --color-line: var(--ds-line); /* 邊框、分隔線 */
-  --color-ink: var(--ds-ink); /* 主要文字 */
-  --color-ink-2: var(--ds-ink-2); /* 次要文字 */
-  --color-ink-3: var(--ds-ink-3); /* 提示、停用 */
-  --color-accent: var(--ds-accent); /* 品牌橘：主要按鈕、開關、選取 */
-  --color-accent-ink: var(--ds-accent-ink); /* 橘色文字（較深，白底上才看得清楚） */
-  --color-raised: var(--ds-raised); /* 被選取的分段 */
-  --color-safe: var(--ds-safe);
-  --color-caution: var(--ds-caution); /* 注意：偏黃，避免和品牌橘混淆 */
-  --color-danger: var(--ds-danger);
-  --color-neutral: var(--ds-neutral);
-
-  /*
-   * 騎乘警示卡（iOS 系統色風格）：上 → 下漸層兩色，兩種主題共用。
-   * 白字在漸層兩端都 ≥ 3:1（大字標準）；「注意」是黃底，改用深色字。
-   */
-  --color-alert-safe: #2da44e;
-  --color-alert-safe-deep: #1b7a37;
-  --color-alert-caution: #ffd60a;
-  --color-alert-caution-deep: #ffc400;
-  --color-alert-caution-ink: #3d2c00;
-  --color-alert-danger: #ff453a;
-  --color-alert-danger-deep: #d70015;
-  --color-alert-neutral: #8e8e93;
-  --color-alert-neutral-deep: #5e5e63;
-  --color-alert-brand: #ec6f13;
-  --color-alert-brand-deep: #c95408;
+  --color-canvas: var(--c-canvas); /* 頁面底色 */
+  --color-panel: var(--c-panel); /* 面板 */
+  --color-sunken: var(--c-sunken); /* 輸入框、軌道、表頭 */
+  --color-hover: var(--c-hover); /* 滑過、選取 */
+  --color-line: var(--c-line); /* 邊框、分隔線 */
+  --color-line-strong: var(--c-line-strong);
+  --color-fg: var(--c-fg); /* 主要文字 */
+  --color-muted: var(--c-muted); /* 次要文字 */
+  --color-subtle: var(--c-subtle); /* 提示、停用、座標軸 */
+  --color-accent: var(--c-accent); /* 重點色：連結、焦點、雷達資料線 */
+  --color-accent-strong: var(--c-accent-strong); /* 主要按鈕底色（白字對比 ≥ 4.5） */
+  --color-ref: var(--c-ref); /* 參考值（輪速感測器）資料線 */
+  --color-ok: var(--c-ok);
+  --color-warn: var(--c-warn);
+  --color-bad: var(--c-bad);
 
   --font-sans: system-ui, -apple-system, 'Segoe UI', 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
-  /* 大數字用圓體（iPhone 上是 SF Pro Rounded，其他系統退回一般字體） */
-  --font-rounded: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', Menlo, Consolas, monospace;
 
-  /* 字級：顯示數字 / 頁標題 / 標題 / 內文 / 說明 / 註記 */
-  --text-display: 4.25rem;
-  --text-display--line-height: 1;
-  --text-headline: 1.625rem;
-  --text-headline--line-height: 2rem;
-  --text-title: 1.0625rem;
-  --text-title--line-height: 1.5rem;
-  --text-body: 0.9375rem;
+  /* 字級：標籤 / 內文 / 數值 / 面板標題 / 統計數字 */
+  --text-label: 0.75rem;
+  --text-label--line-height: 1rem;
+  --text-body: 0.875rem;
   --text-body--line-height: 1.375rem;
-  --text-callout: 0.8125rem;
-  --text-callout--line-height: 1.125rem;
-  --text-caption: 0.6875rem;
-  --text-caption--line-height: 1rem;
+  --text-value: 0.9375rem;
+  --text-value--line-height: 1.25rem;
+  --text-heading: 0.875rem;
+  --text-heading--line-height: 1.25rem;
+  --text-stat: 1.5rem;
+  --text-stat--line-height: 1.875rem;
 
-  /* 圓角：卡片與控制項俐落；騎乘頁的小工具與警示卡用 iOS 風格的大圓角 */
-  --radius-card: 0.75rem;
-  --radius-control: 0.625rem;
-  --radius-widget: 1.25rem;
-  --radius-panel: 1.75rem;
-
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.05);
-
-  /* 危險時：警示卡外圈呼吸光、畫面四周紅色光暈 */
-  --animate-alert-breathe: alert-breathe 1.1s ease-in-out infinite;
-  --animate-edge-glow: edge-glow 1.1s ease-in-out infinite;
-}
-
-@keyframes alert-breathe {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgb(255 69 58 / 0);
-  }
-  50% {
-    box-shadow: 0 0 0 10px rgb(255 69 58 / 0.3);
-  }
-}
-
-@keyframes edge-glow {
-  0%,
-  100% {
-    opacity: 0.45;
-  }
-  50% {
-    opacity: 1;
-  }
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
 }
 
 :root {
-  --ds-canvas: #f6f7f9;
-  --ds-surface: #ffffff;
-  --ds-fill: #f1f3f5;
-  --ds-line: #e1e4e8;
-  --ds-ink: #1d1f23;
-  --ds-ink-2: #5b616b;
-  --ds-ink-3: #767c86;
-  --ds-accent: #f38020;
-  --ds-accent-ink: #b94e0a;
-  --ds-raised: #ffffff;
-  --ds-safe: #1e8e3e;
-  --ds-caution: #b78600;
-  --ds-danger: #d93025;
-  --ds-neutral: #6b7280;
+  --c-canvas: #f4f5f7;
+  --c-panel: #ffffff;
+  --c-sunken: #f0f2f5;
+  --c-hover: #e8ebef;
+  --c-line: #dde1e6;
+  --c-line-strong: #c3c9d1;
+  --c-fg: #15181c;
+  --c-muted: #545b65;
+  --c-subtle: #858c96;
+  --c-accent: #1f6feb;
+  --c-accent-strong: #1a5fce;
+  --c-ref: #7b828c;
+  --c-ok: #16805a;
+  --c-warn: #b4741a;
+  --c-bad: #cf3a3a;
   color-scheme: light;
   -webkit-tap-highlight-color: transparent;
 }
 
 .dark {
-  --ds-canvas: #111214;
-  --ds-surface: #1a1b1e;
-  --ds-fill: #24262a;
-  --ds-line: #33363c;
-  --ds-ink: #f2f3f5;
-  --ds-ink-2: #b2b7c0;
-  --ds-ink-3: #7c838e;
-  --ds-accent: #f6821f;
-  --ds-accent-ink: #ff9d4a;
-  --ds-raised: #3a3d44;
-  --ds-safe: #34a853;
-  --ds-caution: #f2b705;
-  --ds-danger: #f2554a;
-  --ds-neutral: #7a808a;
+  --c-canvas: #0c0d0f;
+  --c-panel: #131518;
+  --c-sunken: #1a1d21;
+  --c-hover: #20242a;
+  --c-line: #262a30;
+  --c-line-strong: #363b44;
+  --c-fg: #e7e9ec;
+  --c-muted: #a0a6af;
+  --c-subtle: #6c737d;
+  --c-accent: #5a9dff;
+  --c-accent-strong: #2e6fd6;
+  --c-ref: #9097a1;
+  --c-ok: #3fb68b;
+  --c-warn: #e0a23e;
+  --c-bad: #ef5b5b;
   color-scheme: dark;
 }
 
 html {
-  background-color: var(--ds-canvas);
+  background-color: var(--c-canvas);
 }
 
 body {
   margin: 0;
   overscroll-behavior-y: none;
+  font-feature-settings: 'tnum' 0;
 }
 
-/* 滑桿（iOS 風格）：細軌道、白色圓鈕；已選範圍是品牌橘（--fill 由 Slider 元件給） */
-.range {
-  appearance: none;
-  width: 100%;
-  height: 1.75rem;
-  background: transparent;
-  cursor: pointer;
-}
-.range:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-.range:focus-visible {
-  outline: none;
-}
-.range::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 9999px;
-  background: linear-gradient(to right, var(--ds-accent) var(--fill, 0%), var(--ds-line) var(--fill, 0%));
-}
-.range::-webkit-slider-thumb {
-  appearance: none;
-  width: 24px;
-  height: 24px;
-  margin-top: -9px;
-  border-radius: 9999px;
-  background: #fff;
-  box-shadow:
-    0 1px 3px rgb(0 0 0 / 0.25),
-    0 0 0 0.5px rgb(0 0 0 / 0.08);
-}
-.range:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 3px var(--ds-accent);
-}
-.range::-moz-range-track {
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--ds-line);
-}
-.range::-moz-range-progress {
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--ds-accent);
-}
-.range::-moz-range-thumb {
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: 9999px;
-  background: #fff;
-  box-shadow:
-    0 1px 3px rgb(0 0 0 / 0.25),
-    0 0 0 0.5px rgb(0 0 0 / 0.08);
-}
-
-/* 數字對齊（距離、速度、時間） */
+/* 數字對齊（速度、距離、時間） */
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* 數字輸入框不顯示瀏覽器的上下箭頭 */
+.no-spin {
+  appearance: textfield;
+}
+.no-spin::-webkit-outer-spin-button,
+.no-spin::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

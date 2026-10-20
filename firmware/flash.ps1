@@ -1,13 +1,13 @@
 ﻿<#
 .SYNOPSIS
-  一鍵燒錄 Radar A 韌體到 ESP32（不需要安裝 Arduino IDE）。
+  一鍵燒錄 BSIS 對地測速雷達韌體到 ESP32（不需要安裝 Arduino IDE）。
 
 .DESCRIPTION
   雙擊同資料夾的 flash.bat 即可。流程：
     1. 檢查 release\ 裡預先編譯好的韌體
     2. 找 esptool：tools\ → Arduino IDE 已安裝的版本 → 自動從 Espressif 官方 GitHub 下載
     3. 自動找出 ESP32 的 COM 埠（CH340 / CP210x / FTDI / ESP32 原生 USB）；沒有驅動時可協助安裝
-    4. 燒錄（只寫程式區，ESP32 上已存的偵測設定會保留），並讀取開機訊息確認成功
+    4. 燒錄（只寫程式區，ESP32 上已存的參數會保留），並讀取開機訊息確認成功
 
 .EXAMPLE
   .\flash.ps1               # 自動找 COM 埠
@@ -45,7 +45,7 @@ function Fail([string]$text, [string[]]$tips = @()) {
 }
 
 Write-Host '==============================================' -ForegroundColor DarkCyan
-Write-Host '  Radar A 韌體燒錄工具（ESP32 + C4001 雷達）' -ForegroundColor White
+Write-Host '  BSIS 對地測速雷達 韌體燒錄工具（ESP32 + C4001）' -ForegroundColor White
 Write-Host '==============================================' -ForegroundColor DarkCyan
 
 # ---------------------------------------------------------------- 1. 韌體檔
@@ -76,7 +76,7 @@ function Find-Esptool {
 function Get-Esptool {
   Info '這台電腦沒有 esptool，從 Espressif 官方 GitHub 下載中…'
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-  $latest = Invoke-RestMethod -Uri 'https://api.github.com/repos/espressif/esptool/releases/latest' -Headers @{ 'User-Agent' = 'RadarA-flash' }
+  $latest = Invoke-RestMethod -Uri 'https://api.github.com/repos/espressif/esptool/releases/latest' -Headers @{ 'User-Agent' = 'BSIS-flash' }
   $asset = $latest.assets | Where-Object { $_.name -match 'windows-amd64\.zip$' } | Select-Object -First 1
   if (-not $asset) { return $null }
   New-Item -ItemType Directory -Force $Tools | Out-Null
@@ -197,7 +197,7 @@ if (-not $NoVerify) {
       if (-not $askedConfig -and ((Get-Date) - $start).TotalSeconds -gt 2) { $serial.Write("GET`n"); $askedConfig = $true }
       try {
         $line = $serial.ReadLine().TrimEnd()
-        if ($line -match '^=== Radar A|^\[藍牙\]|^\[Radar A\]|^CFG |^\[設定\]') {
+        if ($line -match '^=== BSIS|^\[藍牙\]|^\[雷達\]|^CFG |^\[設定\]') {
           Write-Host "      $line"
           if ($line -match 'CFG ') { $seenConfig = $true }
         }
@@ -213,4 +213,4 @@ if (-not $NoVerify) {
 }
 
 Write-Host ''
-Write-Host '下一步：手機用 Chrome 開啟 https://bsis.mingchen.dev ，按「連線雷達」。' -ForegroundColor White
+Write-Host '下一步：手機用 Chrome 開啟 https://bsis.mingchen.dev ，按「連線」，到「校正」頁設定安裝參數。' -ForegroundColor White

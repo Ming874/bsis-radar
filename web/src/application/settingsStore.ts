@@ -6,21 +6,12 @@ import type { SpeedUnit } from '../domain/units';
 import { loadJson, saveJson } from '../infrastructure/storage/localStore';
 
 export type ThemeSetting = 'system' | 'dark' | 'light';
-/** 什麼時候開始發出聲音 / 震動：注意就提醒，或只在危險時提醒 */
-export type AlertMode = 'caution' | 'danger';
 
 export interface AppSettings {
-  sound: boolean;
-  volume: number; // 0 ~ 1
-  alertMode: AlertMode;
-  vibration: boolean;
-  voice: boolean;
-  speakDistance: boolean;
-  flashScreen: boolean;
-  keepAwake: boolean;
   speedUnit: SpeedUnit;
-  autoReconnect: boolean;
   theme: ThemeSetting;
+  keepAwake: boolean;
+  autoReconnect: boolean;
 }
 
 export interface SettingsStore extends AppSettings {
@@ -29,21 +20,14 @@ export interface SettingsStore extends AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  sound: true,
-  volume: 0.8,
-  alertMode: 'caution',
-  vibration: true,
-  voice: true,
-  speakDistance: true,
-  flashScreen: true,
-  keepAwake: true,
   speedUnit: 'kmh',
-  autoReconnect: true,
   theme: 'dark',
+  keepAwake: true,
+  autoReconnect: true,
 };
 
-// v3：預設改為深色主題，舊版存的偏好設定不沿用（index.html 開頭的主題腳本也讀這個名稱）
-export const SETTINGS_STORAGE_KEY = 'radarA.settings.v3';
+// index.html 開頭的主題腳本也讀這個名稱
+export const SETTINGS_STORAGE_KEY = 'bsis.settings.v1';
 
 export function createSettingsStore() {
   const saved = loadJson<Partial<AppSettings>>(SETTINGS_STORAGE_KEY, {});

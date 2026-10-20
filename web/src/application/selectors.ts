@@ -1,62 +1,105 @@
 /**
- * 【應用層】把狀態整理成畫面要的樣子（純函式，可單元測試）。
+ * 【應用層】把狀態整理成畫面要的文字與色調（純函式，可單元測試）。
  */
-import type { Telemetry } from '../domain/types';
-import { formatSpeed, speedUnitLabel, type SpeedUnit } from '../domain/units';
+import { FIRMWARE_MAJOR, firmwareMajor } from '../domain/protocol';
+import type { FrameVerdict, SpeedPoint, SpeedState } from '../domain/types';
 import type { RadarState } from './radarStore';
 
-/** 追蹤目標的速度小於這個值就說「靜止」（與室內測試模式的接近速度門檻相同） */
-const STILL_MPS = 0.1;
+/** 畫面上的狀態色調：ok 正常、warn 需要注意、bad 異常、idle 沒有資料、busy 處理中 */
+export type Tone = 'ok' | 'warn' | 'bad' | 'idle' | 'busy';
 
-export type SafetyTone = 'idle' | 'connecting' | 'offline' | 'stale' | 'safe' | 'caution' | 'danger';
-
-export interface SafetyView {
-  tone: SafetyTone;
-  title: string;
-  detail: string;
+export interface StatusView {
+  tone: Tone;
+  label: string;
+  detail?: string;
 }
 
-export function selectSafety(s: Pick<RadarState, 'connection' | 'stale' | 'telemetry'>): SafetyView {
+/** 連線（頂端列） */
+export function selectLink(s: Pick<RadarState, 'connection' | 'stale' | 'telemetry' | 'legacyFirmware'>): StatusView {
   const { status, attempt, error } = s.connection;
-  if (status === 'idle') return { tone: 'idle', title: '未連線', detail: '按「連線雷達」開始' };
-  if (status === 'disconnected') return { tone: 'idle', title: '已中斷', detail: error ?? '請重新連線' };
-  if (status === 'connecting') {
-    return { tone: 'connecting', title: '連線中…', detail: '請在跳出的視窗選擇 RadarA-ESP32' };
+  switch (status) {
+    case 'idle':
+      return { tone: 'idle', label: '未連線' };
+    case 'disconnected':
+      return { tone: 'bad', label: '已中斷', detail: error };
+    case 'connecting':
+      return { tone: 'busy', label: '連線中' };
+    case 'reconnecting':
+      return { tone: 'busy', label: '重新連線', detail: `第 ${attempt ?? 1} 次` };
+    case 'connected':
+      break;
   }
-  if (status === 'reconnecting') {
-    return { tone: 'offline', title: '重新連線中', detail: `第 ${attempt ?? 1} 次嘗試，請確認 ESP32 有電且在附近` };
-  }
+  if (s.legacyFirmware) return { tone: 'bad', label: '韌體過舊', detail: `v${s.legacyFirmware}` };
+  if (s.stale) return { tone: 'bad', label: '資料中斷', detail: '超過 1.5 秒沒有資料' };
+  if (!s.telemetry) return { tone: 'busy', label: '等待資料' };
+  if (!s.telemetry.radarOnline) return { tone: 'bad', label: '雷達離線', detail: 'ESP32 正在重新設定雷達' };
+  return { tone: 'ok', label: '已連線' };
+}
 
-  if (s.stale) return { tone: 'stale', title: '資料中斷', detail: '超過 1.5 秒沒有收到 ESP32 的資料' };
-  const t = s.telemetry;
-  if (!t) return { tone: 'connecting', title: '等待資料…', detail: '已連線，等待第一筆雷達資料' };
-  if (!t.radarOnline) return { tone: 'offline', title: '雷達離線', detail: 'ESP32 正在重新初始化雷達，請檢查接線' };
+const STATE_VIEW: Record<SpeedState, StatusView> = {
+  noRadar: { tone: 'bad', label: '雷達離線' },
+  stopped: { tone: 'idle', label: '靜止' },
+  acquiring: { tone: 'busy', label: '擷取地面回波' },
+  tracking: { tone: 'ok', label: '追蹤中' },
+  holding: { tone: 'warn', label: '暫時失去回波', detail: '暫時沿用估計值' },
+  lost: { tone: 'bad', label: '訊號中斷', detail: '雷達量不到路面' },
+  overRange: { tone: 'bad', label: '超出測速上限', detail: '速度高於雷達可量範圍' },
+};
 
-  const where = t.distanceM === null ? '' : `距離 ${t.distanceM.toFixed(1)} m`;
-  const when = t.ttcS === null ? '' : `，約 ${t.ttcS.toFixed(1)} 秒後到達`;
-  if (t.level === 2) return { tone: 'danger', title: '危險：快速接近', detail: `${where}${when}` };
-  if (t.level === 1) return { tone: 'caution', title: '注意：後方來車', detail: `${where}${when}` };
-  return {
-    tone: 'safe',
-    title: '安全',
-    detail: t.distanceM === null ? '後方沒有接近中的車輛' : `有目標在 ${t.distanceM.toFixed(0)} m 外接近，尚未進入警示範圍`,
-  };
+/** 估計器狀態（速度旁的狀態列） */
+export function describeState(state: SpeedState): StatusView {
+  return STATE_VIEW[state];
+}
+
+export const VERDICT_LABEL: Record<FrameVerdict, string> = {
+  accepted: '採用',
+  noTarget: '沒有目標',
+  repeated: '外插（重複）',
+  outOfGate: '距離窗口外',
+  wrongDirection: '方向相反',
+  static: '靜止回波',
+  atLimit: '接近測速上限',
+  outlier: '離群值',
+  acquiring: '擷取中',
+  unfolded: '採用（折疊還原）',
+};
+
+/** 韌體版本與網頁不相容（主版本不同） */
+export function firmwareMismatch(version: string | undefined): boolean {
+  if (!version) return false;
+  const major = firmwareMajor(version);
+  return major !== null && major !== FIRMWARE_MAJOR;
 }
 
 /**
- * 雷達正在追蹤、但不是來車的目標（站著的人、遠離的車…）→ 警示卡下方的一句話，例如「偵測到目標 2.9 m・靜止」。
- * 沒有追蹤（或舊韌體沒有 TD 欄位）時回傳 null。
+ * 最近約 1 秒的加速度（m/s²），用來判斷「穩定騎乘」：輪速感測器平均兩圈、本身就落後，
+ * 加減速時拿瞬間的雷達與輪速相比沒有意義。資料不足時回傳 null。
  */
-export function describeTrack(t: Pick<Telemetry, 'trackDistanceM' | 'trackClosingMps'> | null, unit: SpeedUnit): string | null {
-  if (!t || t.trackDistanceM === null) return null;
-  const v = t.trackClosingMps ?? 0;
-  const motion = Math.abs(v) < STILL_MPS ? '靜止' : `${v > 0 ? '接近' : '遠離'} ${formatSpeed(Math.abs(v), unit)} ${speedUnitLabel(unit)}`;
-  return `偵測到目標 ${t.trackDistanceM.toFixed(1)} m・${motion}`;
+export function recentAccel(history: SpeedPoint[], windowMs = 1000): number | null {
+  const last = history[history.length - 1];
+  if (!last || last.speedMps === null) return null;
+  let first: SpeedPoint | null = null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const p = history[i];
+    if (!p || p.t < last.t - windowMs) break;
+    if (p.speedMps !== null) first = p;
+  }
+  if (!first || first.speedMps === null || last.t - first.t < windowMs * 0.6) return null;
+  return ((last.speedMps - first.speedMps) * 1000) / (last.t - first.t);
 }
 
-/** 最近 windowMs 內的最大反射能量（校正用） */
-export function selectEnergyPeak(s: Pick<RadarState, 'history' | 'telemetry'>, windowMs = 10_000): number {
-  const end = s.telemetry?.receivedAt;
-  if (end === undefined) return 0;
-  return s.history.reduce((max, p) => (p.t >= end - windowMs && p.energy > max ? p.energy : max), 0);
+/** 穩定騎乘的加速度上限（m/s²） */
+export const STEADY_ACCEL = 0.4;
+
+/** 方向可能設反：在動（有回波）但大部分資料框「方向相反」 */
+export const WRONG_DIRECTION_HINT_PCT = 60;
+
+/** 判斷碼統計（資料頁）：最近 N 筆各種判斷的比例，依數量排序 */
+export function verdictBreakdown(verdicts: FrameVerdict[]): Array<{ verdict: FrameVerdict; count: number; pct: number }> {
+  const counts = new Map<FrameVerdict, number>();
+  for (const v of verdicts) counts.set(v, (counts.get(v) ?? 0) + 1);
+  const total = verdicts.length;
+  return [...counts.entries()]
+    .map(([verdict, count]) => ({ verdict, count, pct: total ? (count / total) * 100 : 0 }))
+    .sort((a, b) => b.count - a.count);
 }

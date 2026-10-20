@@ -1,70 +1,94 @@
-# Radar A 韌體（ESP32 + DFRobot C4001）
+# 韌體：BSIS 對地測速雷達（ESP32 + DFRobot C4001）
 
-讀取朝後的 C4001 毫米波雷達、判斷後方來車，透過藍牙（Nordic UART Service）把結果送到網頁。
+讀取斜照路面的 C4001 毫米波雷達，估計自行車對地速度與里程，經藍牙（Nordic UART Service）與 USB 序列埠輸出。演算法見 [docs/ALGORITHM.md](../docs/ALGORITHM.md)，資料格式見 [docs/PROTOCOL.md](../docs/PROTOCOL.md)。
 
 ## 燒錄
 
 | 情境 | 做法 |
 | --- | --- |
-| 只想把韌體燒進去 | 雙擊 `flash.bat`（不需 Arduino IDE）：自動找 COM 埠、必要時協助安裝 CH340 驅動、燒錄後讀回版本確認 |
-| 改了程式 | `.\arduino.ps1 upload`（編譯並燒錄），確認沒問題再 `.\arduino.ps1 release` 更新 `release\` |
+| 只要燒錄 | 雙擊 `flash.bat`（不需要 Arduino IDE）：自動找 COM 埠、必要時協助安裝 CH340 驅動、燒錄 `release\` 的檔案並讀回開機訊息 |
+| 改了程式 | `.\arduino.ps1 upload` 編譯並燒錄；確認沒問題後 `.\arduino.ps1 release` 更新 `release\` |
 
-- USB 線要插在 **ESP32 板子本身**的 USB 孔；擴充底板的 USB 孔只供電、不能燒錄。
-- `flash.bat` 分別寫入 bootloader（0x1000）、partitions（0x8000）、boot_app0（0xe000）、韌體（0x10000），**不會清掉已存的設定**。
+- USB 線要插在 **ESP32 板子本身**的 USB-C 孔；擴充底板的孔只供電。
+- `flash.bat` 寫入 bootloader（0x1000）、partitions（0x8000）、boot_app0（0xe000）、韌體（0x10000），**不清除 NVS**，已設定的參數會保留。
 
 ## 開發指令（PowerShell，在 `firmware` 資料夾）
 
 ```powershell
-.\arduino.ps1 setup      # 第一次：安裝 ESP32 開發板套件（使用 Arduino IDE 內建的 arduino-cli）
-.\arduino.ps1 compile    # 編譯
-.\arduino.ps1 upload     # 編譯並燒錄（自動找 COM 埠，也可 -Port COM7）
-.\arduino.ps1 monitor    # 序列埠監看（115200）
+.\arduino.ps1 setup      # 第一次：安裝 ESP32 開發板套件
+.\arduino.ps1 compile    # 編譯（顯示所有警告）
+.\arduino.ps1 upload     # 編譯並燒錄（自動找 COM 埠，或 -Port COM7）
+.\arduino.ps1 monitor    # 序列埠監看（115200），可直接輸入指令
 .\arduino.ps1 ports      # 列出 COM 埠
-.\arduino.ps1 test       # 電腦端單元測試（tests/host_tests.cpp，需要 g++）
-.\arduino.ps1 release    # 把編譯結果與 SHA-256 輸出到 release\
+.\arduino.ps1 test       # 電腦端單元測試與模擬報告（需要 g++）
+.\arduino.ps1 release    # 輸出 release\（給 flash.bat）與 SHA-256
 ```
+
+- arduino-cli 的搜尋順序：環境變數 `ARDUINO_CLI` → Arduino IDE 內建 → `PATH`。
+- 沒有安裝 Arduino IDE 時，下載官方免安裝版 arduino-cli 並設定 `ARDUINO_CLI`；開發板套件仍裝在 `%LOCALAPPDATA%\Arduino15`。
+- 環境：ESP32 Dev Module（`esp32:esp32:esp32`），ESP32 Arduino 核心 3.3.x。
 
 ## 程式架構（分層，相依只往下）
 
 ```text
-RadarA_C4001_BLE/
-├─ RadarA_C4001_BLE.ino   進入點：組裝 RadarApp，設定 CPU 80 MHz、看門狗
-├─ AppConfig.h            編譯期設定：腳位、雷達設定、藍牙名稱與 UUID、輸出週期、kAllowBleConfig
+SpeedRadar/
+├─ SpeedRadar.ino          進入點：組裝 SpeedRadarApp、CPU 80 MHz、看門狗
+├─ AppConfig.h             編譯期設定：腳位、藍牙名稱與 UUID、心跳週期、kAllowBleConfig
 └─ src/
-   ├─ core/      純邏輯（可在電腦上測試）：DetectionConfig（11 項參數與範圍）、ThreatTracker（來車判斷）、WheelSpeed（自身車速）、MedianWindow
-   ├─ drivers/   C4001Protocol（解析 $DFDMD 資料框）、C4001Radar（非阻塞狀態機）、WheelSensor（輪速霍爾感測器中斷）、StatusLed
+   ├─ core/      純邏輯（可在電腦上測試）
+   │   ├─ GroundSpeedEstimator   有效性判斷 → 折疊還原 → 卡爾曼濾波 → 狀態機 → 里程
+   │   ├─ SpeedConfig            執行期參數（8 項）與範圍檢查
+   │   ├─ WheelSpeed             輪速感測器（參考值）：車速與圈數
+   │   └─ RadarMeasurement       一筆資料框
+   ├─ drivers/   C4001Protocol（$DFDMD 解析）、C4001Radar（非阻塞狀態機）、WheelSensor（中斷）、StatusLed
    ├─ comm/      BleLink（NUS、依 MTU 分段、指令佇列）、Telemetry（輸出格式）、CommandParser
-   ├─ storage/   SettingsStore（NVS 命名空間 radarA）
-   └─ app/       RadarApp：把以上串起來，處理 USB／藍牙指令
+   ├─ storage/   SettingsStore（NVS 命名空間 speedRadar）
+   └─ app/       SpeedRadarApp：主迴圈排程、指令處理、自動調高測速上限
+```
+
+### 資料流
+
+```text
+C4001（10 Hz）→ C4001Radar → GroundSpeedEstimator.onFrame() → Telemetry → BleLink / USB（每筆資料框一行）
+                                       ↑ update()：逾時（保持 → 靜止／中斷）、兩筆之間的狀態傳播、里程
+WheelSensor（中斷）→ WheelSpeed → Telemetry 的 W / DW
+BleLink / USB（指令）→ CommandParser → SettingsStore（NVS）→ 必要時重新設定雷達
 ```
 
 ### C4001 驅動
 
-不使用 DFRobot 官方函式庫（會阻塞等待回應，雷達沒回應時可能卡住）。`C4001Radar` 是非阻塞狀態機：
+不使用 DFRobot 函式庫：它會阻塞等待回應，雷達沒回應時可能卡住。`C4001Radar` 是非阻塞狀態機：
 
 ```text
 Offline → Configuring → Verifying → Online ⇄ Probing
 ```
 
-- 開機時完整設定一次（`sensorStop` → `setRunApp 1` → `sensorStop` → `setRange 0.3 20.0` → `setThrFactor <RTHR>` → `setMicroMotion 0` → `saveConfig` → `getRange`、`getThrFactor` 讀回 → `sensorStart`），之後斷線只送 `sensorStart`；網頁改了 `RTHR` 也會重新完整設定。
-- 設定過程中雷達的回覆會印在序列埠：`[Radar A] 雷達讀回 getThrFactor：5.00`；被雷達拒絕的指令會印 `雷達拒絕指令（第 N 步）`。
-- 雷達實測行為（10 Hz、一次一個目標、正對的牆會被回報成靜止目標、外插資料框、門檻單位）見 [docs/ALGORITHM.md §10](../docs/ALGORITHM.md)；實測用的直通程式與語音引導走動測試在 [diagnostics/](diagnostics/README.md)。
-- 連續失敗會把重試間隔從 3 秒拉長到 60 秒，避免一直寫快閃記憶體。
-- 超過約 2.5 秒沒有資料就判定離線並自動重連。
+- **開機時完整設定一次**：`sensorStop` → `setRunApp 1` → `sensorStop` → `setRange <窗口>` → `setThrFactor <RTHR>` → `setMicroMotion 0` → `saveConfig` → `getRange`、`getThrFactor` 讀回 → `sensorStart`。
+  - 距離窗口由 `ANGLE`、`HEIGHT` 算出，預設是 `setRange 0.62 2.40`。
+  - 之後斷線只送 `sensorStart`。
+  - 網頁改了 `ANGLE`、`HEIGHT`、`RTHR` 才重新完整設定（約 4 秒）。
+- 雷達的回覆會印在序列埠，例如 `[雷達] 讀回 getRange：0.620 2.400`；被拒絕的指令印成 `[雷達] 指令被拒絕（第 N 步）`。
+- 連續失敗時，重試間隔從 3 秒加倍到 60 秒，避免一直寫雷達的 flash。
+- 約 2.5 秒沒有資料就判定離線並自動重連。
 
-### 來車判斷（ThreatTracker，v2.2.0）
+### 對地速度估計（GroundSpeedEstimator）
 
-完整說明、公式、參數與參考文獻見 [docs/ALGORITHM.md](../docs/ALGORITHM.md)。
+完整說明、公式、參數依據與文獻見 [ALGORITHM.md](../docs/ALGORITHM.md) §6：
 
-0. **篩掉外插資料框**：C4001 失去目標時會多送一筆速度、能量與上一筆完全相同的資料框，當成「沒偵測到」。
-1. **關聯**：量測距離落在卡爾曼預測的驗證閘門（3σ，1.2～3 m）內才採用；連續 3 筆「彼此一致」的跳值才視為換了目標。
-2. **追蹤**：卡爾曼濾波器（`RangeKalman`，狀態 = 距離、距離變化率）融合距離與都卜勒速度。
-3. **交叉核對**（`VelocityCheck`）：都卜勒速度必須和最近 1 秒的距離變化率（`RangeRateWindow` 最小平方斜率）一致才採用；超過 10 m/s 的折疊會自動還原，`SIGN` 設反會自動反過來並提示，不一致或卡在量測上限就改用距離變化率。
-4. **確認**：正在接近（接近速度 ≥ `MINSPD`，測試模式 0.1 m/s）、能量 ≥ `MINE` 的資料加分、不合格扣分，分數達到 `CONFIRM` 才算來車。能量是追蹤中目標最近 5 筆偵測的中位數（沒偵測到的那幾筆不算）。
-5. **分級**：距離 ≤ `RANGE` 為注意；到達時間 ≤ `DTTC` 或距離 ≤ `DDIST` 為危險。
-6. **保持**：最後一次真正偵測到後，警示再維持 `HOLD` 毫秒。
-
-序列埠監看（`.\arduino.ps1 monitor`）每 0.2 秒印一行：`TD`／`TV` 是雷達目前追蹤的目標（不論是不是來車），`D`／`V` 只有確認的來車才有值，`RR` 是距離變化率、方括號是速度來源（核對中／都卜勒／折疊還原／距離變化率／正負號相反）。
+1. **逐筆判斷**：
+   - 沒目標、外插資料框、距離不在地面窗口、靜止回波、方向與 `DIR` 相反、原始值在測速上限附近。
+   - 每一筆都有判斷碼 `FV`，網頁的「數據」頁會統計。
+2. **折疊還原**：追蹤中依預測速度，還原超過 `VMAX` 而被雷達折疊的讀值。
+   - 剛失去訊號時，改用中斷前的速度（10 秒內有效）。
+   - 量到明顯超過 `VMAX` 的值時，`SpeedRadarApp` 會自動把 `VMAX` 調為 10 m/s 並存檔。
+3. **換算**：`g = CAL·|vr|/cos θ`（`MODEL 0`），或逐筆用 `sin α = h / r`（`MODEL 1`）。
+4. **卡爾曼濾波**：
+   - 狀態為速度、加速度（等加速度模型）。
+   - 量測雜訊由二階差分的中位數自動估計。
+   - 過程雜訊依正規化創新平方自動切換（巡航平順、加減速跟得上）。
+   - 3σ 閘門；連續 3 筆一致的離群值會重新初始化。
+5. **狀態機**：靜止 → 擷取（3 筆一致）→ 追蹤 ⇄ 保持 → 靜止／訊號中斷／超出上限。
+6. **里程**：用量測值積分（急煞時濾波落後不會多算距離）；保持期間的距離依結果補回。
 
 ### LED（板載藍燈，GPIO2）
 
@@ -72,27 +96,64 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 | --- | --- |
 | 慢閃（0.5 秒） | 正常，等待手機連線 |
 | 快閃（0.15 秒） | 手機已連線 |
+| 恆亮 | 正在量到地面速度（追蹤中） |
 | 每秒閃兩下 | 雷達離線或初始化中 |
-| 恆亮 | 後方來車警示中 |
 
-## 設定
+## 參數
 
-- **執行中可調**（存在 NVS，網頁「裝置」頁或指令修改）：`TEST`、`MINSPD`、`MINE`、`RANGE`、`SIGN`、`DTTC`、`DDIST`、`HOLD`、`CONFIRM`、`RTHR`（雷達偵測門檻，預設 5）、`WHEEL`（輪周長，預設 2105 mm），範圍與預設見 [docs/PROTOCOL.md](../docs/PROTOCOL.md)。
-- **編譯期**（`AppConfig.h`）：腳位（雷達 16／17、輪速感測器 27）、雷達距離 0.3～20 m、藍牙名稱、MTU 247、遙測週期 200 ms。
+**執行中可調**：存在 NVS，可從網頁或指令修改。
 
-### 自身車速（輪速感測器）
+| 指令 | 意義 | 預設 |
+| --- | --- | --- |
+| `ANGLE` | 俯角（度） | 45 |
+| `HEIGHT` | 離地高度（m） | 0.70 |
+| `DIR` | 朝向：1 朝後、-1 朝前 | 1 |
+| `MODEL` | 0 固定角度、1 距離幾何 | 0 |
+| `CAL` | 校正係數 | 1.0000 |
+| `RTHR` | C4001 偵測門檻 | 5 |
+| `WHEEL` | 輪周長（mm） | 2105 |
+| `VMAX` | C4001 徑向測速上限（m/s） | 3.28 |
 
-3144 霍爾開關（VCC → V、GND → G、OUT → GPIO27）或磁簧開關（GPIO27 ↔ G），輻條上一顆磁鐵。`WheelSensor` 用下降緣中斷記下時間，`WheelSpeed` 算車速：輪周長 ÷ 最近兩圈的平均間隔，減速時用「距離上一圈已經過了多久」讓車速平順下降，3 秒沒有脈衝算停止。開機後收到第一個脈衝才開始在遙測送 `S`，沒接感測器時網頁不會顯示假的 0 km/h。
-- **安全**：`kAllowBleConfig = false` 時，藍牙只能讀資料，改設定與重開機只能從 USB。
+範圍見 [PROTOCOL.md](../docs/PROTOCOL.md) §3。
+
+**編譯期**（`AppConfig.h`）：
+- 腳位：雷達 16／17、輪速感測器 27、LED 2。
+- 藍牙名稱 `BSIS-Speed`、MTU 247、心跳 250 ms。
+- `kAllowBleConfig`：設為 `false` 時，藍牙只能讀資料，修改參數必須用 USB。
 
 ## 測試
 
-`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯（232 項），涵蓋資料框解析、指令解析與範圍、輸出格式（含最長一行不超過緩衝區）、來車確認／分級／保持、換目標、雜訊與掉資料、速度交叉核對的各種情境（都卜勒折疊、飽和、報 0、`SIGN` 設反、加減速、反射點跳動）、C4001 實測行為（外插資料框、能量中位數），追蹤中目標（`TD`／`TV`）的回報，以及自身車速（輪速脈衝、防彈跳、減速與停止）。需要電腦端的 `g++`（例如 MinGW-w64）。
+`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯，共 318 項檢查：
+
+- 資料框解析：含 C4001 實測的空白欄位。
+- 幾何：距離窗口、兩種換算模型。
+- 估計器：
+  - 擷取、追蹤、停車、保持、中斷、重新擷取、急煞時重新初始化。
+  - 剔除：外插框、窗口外、方向相反、離群值、停車時的雜散目標、DIR 設反。
+  - 測速上限：截斷、折疊還原、自動調高的觸發、中斷後以先前速度還原。
+  - 雜訊、加減速、雜散目標、回波斷續下的精度（模擬）。
+- 指令範圍、輸出格式（最長一行放得進緩衝區）、輪速感測器。
+
+最後會印出兩張模擬報表（情境表現、路面 × 模型），就是 ALGORITHM.md §9 的數據。
 
 ```powershell
-.\arduino.ps1 test
+.\arduino.ps1 test       # 或 sh tests/run_tests.sh
 ```
 
-## 舊版
+- 需要電腦端的 g++（例如 MinGW-w64）。
+- 新增 `.cpp` 時，要同時加進 `arduino.ps1` 的 `$TestSources` 與 `tests/run_tests.sh`。
+- 測試執行檔產生在 `tests/`：Windows 會擋暫存資料夾裡新編出來的 exe，而 `tests/*.exe` 已排除在 git 外。
 
-`legacy/RadarA_C4001_BLE_v1/` 是最初的 v1 程式，只供對照，不要燒錄。
+## 診斷工具
+
+`diagnostics/` 有三個工具：
+- USB ⇄ C4001 直通程式：直接對雷達下指令。
+- `analyze.awk`：分析直通紀錄。
+- `analyze_ride.py`：分析網頁下載的騎乘 CSV，判斷測速上限、比較兩種模型、比對輪速。
+
+說明見 [diagnostics/README.md](diagnostics/README.md)。
+
+## 版本
+
+- 3.x：對地測速（本版）。
+- 2.x：後方來車偵測，最後一版是 2.4.0，commit `8a5c3b6`。可用 `git checkout 8a5c3b6 -- firmware` 取回。

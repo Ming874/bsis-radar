@@ -1,66 +1,50 @@
 import { describe, expect, it } from 'vitest';
 import type { Telemetry } from '../domain/types';
-import { describeTrack, selectEnergyPeak, selectSafety } from './selectors';
+import { describeState, firmwareMismatch, recentAccel, selectLink, verdictBreakdown } from './selectors';
 
-const telemetry = (patch: Partial<Telemetry> = {}): Telemetry => ({
-  radarOnline: true,
-  warning: false,
-  level: 0,
-  distanceM: null,
-  closingMps: null,
-  ttcS: null,
-  rawTargets: 0,
-  rawRangeM: null,
-  rawSpeedMps: null,
-  energy: 0,
-  uptimeS: 1,
-  ownSpeedKmh: null,
-  velocitySource: null,
-  rangeRateMps: null,
-  trackDistanceM: null,
-  trackClosingMps: null,
-  receivedAt: 10_000,
-  ...patch,
-});
+const tele = { radarOnline: true } as Telemetry;
 
-describe('describeTrack', () => {
-  it('雷達追蹤中、不是來車的目標：距離與靜止／接近／遠離', () => {
-    expect(describeTrack(telemetry({ trackDistanceM: 2.87, trackClosingMps: -0.02 }), 'mps')).toBe('偵測到目標 2.9 m・靜止');
-    expect(describeTrack(telemetry({ trackDistanceM: 3.4, trackClosingMps: -0.6 }), 'mps')).toBe('偵測到目標 3.4 m・遠離 0.6 m/s');
-    expect(describeTrack(telemetry({ trackDistanceM: 5, trackClosingMps: 1 }), 'kmh')).toBe('偵測到目標 5.0 m・接近 4 km/h');
+describe('selectLink', () => {
+  it('連線狀態', () => {
+    expect(selectLink({ connection: { status: 'idle' }, stale: false, telemetry: null, legacyFirmware: null }).label).toBe('未連線');
+    expect(selectLink({ connection: { status: 'connecting' }, stale: false, telemetry: null, legacyFirmware: null }).tone).toBe('busy');
+    expect(selectLink({ connection: { status: 'reconnecting', attempt: 3 }, stale: false, telemetry: null, legacyFirmware: null }).detail).toBe('第 3 次');
   });
 
-  it('沒有追蹤或舊韌體（沒有 TD）時回傳 null', () => {
-    expect(describeTrack(telemetry(), 'mps')).toBeNull();
-    expect(describeTrack(null, 'mps')).toBeNull();
+  it('已連線：依序檢查韌體版本、資料中斷、雷達', () => {
+    const base = { connection: { status: 'connected' as const }, stale: false, telemetry: tele, legacyFirmware: null };
+    expect(selectLink(base)).toEqual({ tone: 'ok', label: '已連線' });
+    expect(selectLink({ ...base, legacyFirmware: '2.4.0' }).label).toBe('韌體過舊');
+    expect(selectLink({ ...base, stale: true }).label).toBe('資料中斷');
+    expect(selectLink({ ...base, telemetry: null }).label).toBe('等待資料');
+    expect(selectLink({ ...base, telemetry: { ...tele, radarOnline: false } }).label).toBe('雷達離線');
   });
 });
 
-describe('selectSafety', () => {
-  it('依連線狀態顯示', () => {
-    expect(selectSafety({ connection: { status: 'idle' }, stale: false, telemetry: null }).tone).toBe('idle');
-    expect(selectSafety({ connection: { status: 'reconnecting', attempt: 3 }, stale: false, telemetry: null }).detail).toContain('第 3 次');
-    expect(selectSafety({ connection: { status: 'connected' }, stale: true, telemetry: telemetry() }).tone).toBe('stale');
-    expect(selectSafety({ connection: { status: 'connected' }, stale: false, telemetry: telemetry({ radarOnline: false }) }).tone).toBe('offline');
+describe('其他', () => {
+  it('估計器狀態', () => {
+    expect(describeState('tracking').tone).toBe('ok');
+    expect(describeState('lost').tone).toBe('bad');
+    expect(describeState('stopped').label).toBe('靜止');
   });
 
-  it('依警示等級顯示', () => {
-    const base = { connection: { status: 'connected' as const }, stale: false };
-    expect(selectSafety({ ...base, telemetry: telemetry() }).tone).toBe('safe');
-    const caution = selectSafety({ ...base, telemetry: telemetry({ level: 1, distanceM: 12.3, ttcS: 2.1 }) });
-    expect(caution).toEqual({ tone: 'caution', title: '注意：後方來車', detail: '距離 12.3 m，約 2.1 秒後到達' });
-    expect(selectSafety({ ...base, telemetry: telemetry({ level: 2, distanceM: 5, ttcS: 0.8 }) }).tone).toBe('danger');
+  it('韌體主版本不同', () => {
+    expect(firmwareMismatch('3.0.0')).toBe(false);
+    expect(firmwareMismatch('4.0.0')).toBe(true);
+    expect(firmwareMismatch(undefined)).toBe(false);
   });
-});
 
-describe('selectEnergyPeak', () => {
-  it('只看最近 10 秒', () => {
-    const history = [
-      { t: -500, distanceM: null, level: 0 as const, energy: 90000 }, // 10.5 秒前：不算
-      { t: 5000, distanceM: null, level: 0 as const, energy: 40000 },
-      { t: 10000, distanceM: null, level: 0 as const, energy: 20000 },
-    ];
-    expect(selectEnergyPeak({ history, telemetry: telemetry({ receivedAt: 10_000 }) })).toBe(40000);
-    expect(selectEnergyPeak({ history: [], telemetry: null })).toBe(0);
+  it('最近 1 秒的加速度', () => {
+    const pts = Array.from({ length: 11 }, (_, i) => ({ t: i * 100, speedMps: 5 + 0.2 * i, wheelMps: null, state: 'tracking' as const }));
+    expect(recentAccel(pts)).toBeCloseTo(2, 6);
+    expect(recentAccel(pts.slice(-3))).toBeNull(); // 資料不足 1 秒
+    expect(recentAccel([])).toBeNull();
+  });
+
+  it('判斷碼統計', () => {
+    const b = verdictBreakdown(['accepted', 'accepted', 'noTarget', 'accepted']);
+    expect(b[0]).toEqual({ verdict: 'accepted', count: 3, pct: 75 });
+    expect(b[1]?.verdict).toBe('noTarget');
+    expect(verdictBreakdown([])).toEqual([]);
   });
 });

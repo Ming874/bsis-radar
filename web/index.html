@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#1a1b1e" />
-    <meta name="description" content="自行車後方來車警示儀表板：以 Web Bluetooth 連線 ESP32 與 C4001 毫米波雷達" />
+    <meta name="theme-color" content="#131518" />
+    <meta name="description" content="BSIS 對地測速：以 Web Bluetooth 連線 ESP32 與朝向路面的 C4001 24 GHz 毫米波雷達，即時顯示自行車對地速度、校正與驗證" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
-    <title>Radar A 後方來車警示</title>
+    <title>BSIS 測速</title>
     <script>
-      // 在畫面出現前先套用使用者選的主題（預設深色），避免開啟時閃一下；設定存在 radarA.settings.v3
+      // 在畫面出現前先套用使用者選的主題（預設深色），避免開啟時閃一下；設定存在 bsis.settings.v1
       try {
-        var theme = JSON.parse(localStorage.getItem('radarA.settings.v3') || '{}').theme || 'dark';
+        var theme = JSON.parse(localStorage.getItem('bsis.settings.v1') || '{}').theme || 'dark';
         var dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.classList.toggle('dark', dark);
         if (!dark) document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff');

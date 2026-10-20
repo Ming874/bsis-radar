@@ -1,6 +1,6 @@
 // Service Worker：讓網頁離線也能開啟（沒網路時連 ESP32 不需要網路）
 // 頁面：先用網路、失敗才用快取；/assets/ 下的檔名含雜湊，永遠不變 → 直接用快取。
-const CACHE = 'radar-a-v3';
+const CACHE = 'bsis-speed-v1';
 const APP_SHELL = ['/', '/manifest.json', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {

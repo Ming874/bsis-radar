@@ -4,7 +4,6 @@ firmware/tests/*.exe
 firmware/tools/
 firmware/diagnostics/.bridge_build/
 firmware/diagnostics/*.txt
-!firmware/diagnostics/prompts.txt
 
 # 網頁
 web/node_modules/

@@ -1,31 +1,35 @@
 /**
- * 【基礎設施層】CSV 匯出：原始遙測記錄與來車事件，給報告做成功率分析。
+ * 【基礎設施層】CSV 匯出：每一筆雷達資料框一列，給精度分析（雷達 vs 輪速、模型比較）用。
+ * 欄位與遙測一一對應，定義見 docs/PROTOCOL.md。
  */
-import type { ApproachEvent, Telemetry } from '../../domain/types';
+import type { Telemetry } from '../../domain/types';
 
-const TELEMETRY_HEADER = [
+const HEADER = [
   'time_iso',
-  'radar_online',
-  'level',
-  'distance_m',
-  'closing_mps',
-  'ttc_s',
-  'raw_targets',
-  'raw_range_m',
-  'raw_speed_mps',
-  'energy',
   'uptime_s',
-  'own_speed_kmh',
-  'velocity_source',
-  'range_rate_mps',
-  'track_distance_m',
-  'track_closing_mps',
+  'frame',
+  'radar_online',
+  'state',
+  'speed_mps',
+  'sigma_mps',
+  'quality_pct',
+  'targets',
+  'range_m',
+  'radial_mps',
+  'energy',
+  'ground_mps',
+  'verdict',
+  'radar_distance_m',
+  'wheel_mps',
+  'wheel_distance_m',
 ];
 
-const cell = (v: number | null | boolean): string => (v === null ? '' : typeof v === 'boolean' ? (v ? '1' : '0') : String(v));
+const cell = (v: number | null | boolean | string): string =>
+  v === null ? '' : typeof v === 'boolean' ? (v ? '1' : '0') : String(v);
 
 export class CsvRecorder {
   private rows: string[] = [];
+  private lastFrame = -1;
 
   get rowCount(): number {
     return this.rows.length;
@@ -33,50 +37,40 @@ export class CsvRecorder {
 
   clear(): void {
     this.rows = [];
+    this.lastFrame = -1;
   }
 
-  append(t: Telemetry): void {
+  /** 新的資料框才記錄（心跳行的 FN 不變）；雷達離線時每一行都記，看得出中斷了多久 */
+  append(t: Telemetry): boolean {
+    if (t.radarOnline && t.frame === this.lastFrame) return false;
+    this.lastFrame = t.frame;
     this.rows.push(
       [
         new Date(t.receivedAt).toISOString(),
-        cell(t.radarOnline),
-        t.level,
-        cell(t.distanceM),
-        cell(t.closingMps),
-        cell(t.ttcS),
-        t.rawTargets,
-        cell(t.rawRangeM),
-        cell(t.rawSpeedMps),
-        t.energy,
         t.uptimeS,
-        cell(t.ownSpeedKmh),
-        t.velocitySource ?? '',
-        cell(t.rangeRateMps),
-        cell(t.trackDistanceM),
-        cell(t.trackClosingMps),
+        t.frame,
+        cell(t.radarOnline),
+        t.state,
+        cell(t.speedMps),
+        t.sigmaMps,
+        t.qualityPct,
+        t.targets,
+        cell(t.rangeM),
+        cell(t.radialMps),
+        t.energy,
+        cell(t.groundMps),
+        t.verdict,
+        t.radarDistanceM,
+        cell(t.wheelMps),
+        cell(t.wheelDistanceM),
       ].join(','),
     );
+    return true;
   }
 
   toCsv(): string {
-    return [TELEMETRY_HEADER.join(','), ...this.rows].join('\n');
+    return [HEADER.join(','), ...this.rows].join('\n');
   }
-}
-
-export function eventsToCsv(events: ApproachEvent[]): string {
-  const header = 'start_iso,end_iso,duration_s,min_distance_m,max_closing_kmh,min_ttc_s,max_level';
-  const rows = events.map((e) =>
-    [
-      new Date(e.startedAt).toISOString(),
-      new Date(e.endedAt).toISOString(),
-      e.durationS.toFixed(1),
-      e.minDistanceM?.toFixed(2) ?? '',
-      e.maxClosingMps === null ? '' : (e.maxClosingMps * 3.6).toFixed(1),
-      e.minTtcS?.toFixed(1) ?? '',
-      e.maxLevel,
-    ].join(','),
-  );
-  return [header, ...rows].join('\n');
 }
 
 /** 觸發瀏覽器下載（加 BOM，Excel 開啟中文才不會亂碼） */

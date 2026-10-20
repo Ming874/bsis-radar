@@ -1,207 +1,175 @@
 import { describe, expect, it } from 'vitest';
-import { buildCommand, diffConfig, parseLine } from './protocol';
-import type { DeviceConfig } from './types';
+import { DEFAULT_CONFIG, buildCommand, diffConfig, firmwareMajor, groundWindow, parseLine, unambiguousGroundMps } from './protocol';
 
 describe('parseLine：遙測', () => {
-  it('解析完整的一行（與韌體輸出相同）', () => {
-    const r = parseLine('R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35 VS=2 RR=6.11');
-    expect(r.kind).toBe('telemetry');
-    if (r.kind !== 'telemetry') return;
-    expect(r.telemetry).toEqual({
+  it('追蹤中的一行（含輪速）', () => {
+    const p = parseLine('R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=0 DR=1234.5 W=5.51 DW=1240.2 T=812');
+    expect(p.kind).toBe('telemetry');
+    if (p.kind !== 'telemetry') return;
+    expect(p.telemetry).toEqual({
       radarOnline: true,
-      warning: true,
-      level: 2,
-      distanceM: 8.42,
-      closingMps: 6.2,
-      ttcS: 1.4,
-      rawTargets: 1,
-      rawRangeM: 8.5,
-      rawSpeedMps: -6.31,
+      state: 'tracking',
+      speedMps: 5.43,
+      sigmaMps: 0.12,
+      qualityPct: 95,
+      wrongDirPct: 0,
+      frame: 1234,
+      targets: 1,
+      rangeM: 0.86,
+      radialMps: 3.84,
       energy: 52000,
-      uptimeS: 35,
-      ownSpeedKmh: null,
-      velocitySource: 'doppler',
-      rangeRateMps: 6.11,
-      trackDistanceM: null,
-      trackClosingMps: null,
+      groundMps: 5.4,
+      verdict: 'accepted',
+      radarDistanceM: 1234.5,
+      wheelMps: 5.51,
+      wheelDistanceM: 1240.2,
+      uptimeS: 812,
     });
   });
 
-  it('追蹤中的目標（TD／TV，韌體 2.3 起）：沒有來車時也有值；舊韌體沒有就是 null', () => {
-    const r = parseLine('R=1 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=1 RD=2.87 RV=0.00 E=3000 T=60 VS=2 TD=2.87 TV=-0.02');
-    if (r.kind !== 'telemetry') throw new Error('not telemetry');
-    expect(r.telemetry.distanceM).toBeNull();
-    expect(r.telemetry.trackDistanceM).toBe(2.87);
-    expect(r.telemetry.trackClosingMps).toBe(-0.02);
-    const orphan = parseLine('R=1 L=0 D=-1 TV=1.5'); // 沒有 TD 時 TV 不採用
-    if (orphan.kind !== 'telemetry') throw new Error('not telemetry');
-    expect(orphan.telemetry.trackDistanceM).toBeNull();
-    expect(orphan.telemetry.trackClosingMps).toBeNull();
+  it('沒有目標、速度未知、沒接輪速感測器', () => {
+    const p = parseLine('R=1 ST=5 V=-1.00 SD=0.00 Q=0 WD=0 FN=7 N=0 RD=-1.00 RV=0.00 E=0 G=-1.00 FV=1 DR=10.0 T=3');
+    if (p.kind !== 'telemetry') throw new Error('應該是遙測');
+    expect(p.telemetry.state).toBe('lost');
+    expect(p.telemetry.speedMps).toBeNull();
+    expect(p.telemetry.rangeM).toBeNull();
+    expect(p.telemetry.radialMps).toBeNull();
+    expect(p.telemetry.groundMps).toBeNull();
+    expect(p.telemetry.verdict).toBe('noTarget');
+    expect(p.telemetry.wheelMps).toBeNull();
+    expect(p.telemetry.wheelDistanceM).toBeNull();
   });
 
-  it('速度交叉核對欄位：VS 對照、RR 可省略、舊韌體沒有 VS', () => {
-    const codes = ['none', 'checking', 'doppler', 'unfolded', 'rangeRate', 'signFlip'] as const;
-    codes.forEach((code, i) => {
-      const r = parseLine(`R=1 L=0 D=-1 VS=${i}`);
-      if (r.kind !== 'telemetry') throw new Error('not telemetry');
-      expect(r.telemetry.velocitySource).toBe(code);
-      expect(r.telemetry.rangeRateMps).toBeNull();
+  it('狀態與判斷碼', () => {
+    const states = ['noRadar', 'stopped', 'acquiring', 'tracking', 'holding', 'lost', 'overRange'];
+    const u = parseLine('R=1 ST=3 V=5 FV=9');
+    expect(u.kind === 'telemetry' && u.telemetry.verdict).toBe('unfolded');
+    states.forEach((s, i) => {
+      const p = parseLine(`R=1 ST=${i} V=0 FV=${i}`);
+      expect(p.kind === 'telemetry' && p.telemetry.state).toBe(s);
     });
-    const old = parseLine('R=1 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=0 RD=-1.00 RV=0.00 E=0 T=7');
-    if (old.kind !== 'telemetry') throw new Error('not telemetry');
-    expect(old.telemetry.velocitySource).toBeNull();
-    const bad = parseLine('R=1 L=0 VS=9 RR=-3.5');
-    if (bad.kind !== 'telemetry') throw new Error('not telemetry');
-    expect(bad.telemetry.velocitySource).toBeNull();
-    expect(bad.telemetry.rangeRateMps).toBe(-3.5);
+    const p = parseLine('R=1 ST=99 V=0 FV=99');
+    expect(p.kind === 'telemetry' && p.telemetry.state).toBe('noRadar');
+    expect(p.kind === 'telemetry' && p.telemetry.verdict).toBe('noTarget');
+    const v = parseLine('R=1 ST=3 V=1 FV=4');
+    expect(v.kind === 'telemetry' && v.telemetry.verdict).toBe('wrongDirection');
   });
 
-  it('沒有目標時 -1 變成 null', () => {
-    const r = parseLine('R=0 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0 N=0 RD=-1.00 RV=0.00 E=0 T=7');
-    if (r.kind !== 'telemetry') throw new Error('not telemetry');
-    expect(r.telemetry.radarOnline).toBe(false);
-    expect(r.telemetry.distanceM).toBeNull();
-    expect(r.telemetry.closingMps).toBeNull();
-    expect(r.telemetry.ttcS).toBeNull();
-    expect(r.telemetry.rawRangeM).toBeNull();
-    expect(r.telemetry.rawSpeedMps).toBeNull();
+  it('壞資料：重複的鍵（兩行黏在一起）、缺必要欄位', () => {
+    expect(parseLine('R=1 ST=3 V=5 R=1 ST=3').kind).toBe('unknown');
+    expect(parseLine('R=1 V=5').kind).toBe('unknown');
+    expect(parseLine('hello').kind).toBe('unknown');
+    expect(parseLine('').kind).toBe('unknown');
   });
 
-  it('鍵的順序不拘、未知鍵忽略、缺少的鍵不會壞', () => {
-    const r = parseLine('T=9 FOO=bar L=1 R=1 S=18.5 junk D=12');
-    if (r.kind !== 'telemetry') throw new Error('not telemetry');
-    expect(r.telemetry.level).toBe(1);
-    expect(r.telemetry.warning).toBe(true);
-    expect(r.telemetry.distanceM).toBe(12);
-    expect(r.telemetry.ownSpeedKmh).toBe(18.5);
-    expect(r.telemetry.energy).toBe(0);
-  });
-
-  it('數字格式錯誤的欄位視為缺少', () => {
-    const r = parseLine('R=1 L=abc W=1 D=x');
-    if (r.kind !== 'telemetry') throw new Error('not telemetry');
-    expect(r.telemetry.level).toBe(1); // L 壞掉時由 W 推得
-    expect(r.telemetry.distanceM).toBeNull();
-  });
-
-  it('兩行被黏在一起（藍牙分段遺失）時整行丟掉，不顯示錯的數字', () => {
-    expect(parseLine('R=1 W=1 L=2 D=8.42 V=6.R=1 W=0 L=0 D=-1.00 V=0.00 TTC=-1.0').kind).toBe('unknown');
-  });
-
-  it('雜訊與空白行回傳 unknown', () => {
-    expect(parseLine('hello world').kind).toBe('unknown');
-    expect(parseLine('   ').kind).toBe('unknown');
-    expect(parseLine('sensorStart').kind).toBe('unknown');
+  it('數值夾在合理範圍', () => {
+    const p = parseLine('R=1 ST=3 V=5 Q=180 WD=-3 E=-5 W=-1 DW=4');
+    if (p.kind !== 'telemetry') throw new Error('應該是遙測');
+    expect(p.telemetry.qualityPct).toBe(100);
+    expect(p.telemetry.wrongDirPct).toBe(0);
+    expect(p.telemetry.energy).toBe(0);
+    expect(p.telemetry.wheelMps).toBe(0);
   });
 });
 
 describe('parseLine：設定與回覆', () => {
-  it('解析 CFG（全部 11 個參數）', () => {
-    const r = parseLine('CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=2.0 DDIST=5.0 HOLD=1500 CONFIRM=2 RTHR=8 WHEEL=2050 FW=2.4.0');
-    expect(r).toEqual({
+  it('CFG', () => {
+    const p = parseLine('CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=1 CAL=1.0425 RTHR=5 WHEEL=2105 VMAX=3.2 RMIN=0.62 RMAX=2.15 FW=3.0.0');
+    expect(p).toEqual({
       kind: 'config',
       config: {
-        testMode: true,
-        minSpeedMps: 1.5,
-        minEnergy: 0,
-        warnRangeM: 15,
-        approachSign: -1,
-        dangerTtcS: 2,
-        dangerDistM: 5,
-        holdMs: 1500,
-        confirmHits: 2,
-        radarThreshold: 8,
-        wheelMm: 2050,
-        firmware: '2.4.0',
+        angleDeg: 45,
+        heightM: 0.7,
+        direction: 1,
+        model: 'rangeGeometry',
+        calibration: 1.0425,
+        radarThreshold: 5,
+        wheelMm: 2105,
+        radialLimitMps: 3.2,
+        gateMinM: 0.62,
+        gateMaxM: 2.15,
+        firmware: '3.0.0',
       },
     });
   });
 
-  it('較舊的 CFG 沒有新欄位時用預設值；雷達偵測門檻、輪周長是 null（舊韌體不能調）', () => {
-    const r = parseLine('CFG TEST=0 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 FW=1.9');
-    if (r.kind !== 'config') throw new Error('not config');
-    expect(r.config).toMatchObject({ dangerTtcS: 1.5, dangerDistM: 4, holdMs: 1000, confirmHits: 3, radarThreshold: null, wheelMm: null });
+  it('舊版（後方來車偵測）韌體的 CFG', () => {
+    const p = parseLine('CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 WHEEL=2105 FW=2.4.0');
+    expect(p).toEqual({ kind: 'legacyConfig', firmware: '2.4.0' });
   });
 
-  it('CFG 缺欄位或 SIGN 不合法時不採用', () => {
-    expect(parseLine('CFG TEST=1 MINSPD=1.5').kind).toBe('unknown');
-    expect(parseLine('CFG TEST=1 MINSPD=1.5 MINE=0 RANGE=15 SIGN=5').kind).toBe('unknown');
+  it('不完整的 CFG', () => {
+    expect(parseLine('CFG ANGLE=45 HEIGHT=0.7 DIR=0 CAL=1').kind).toBe('unknown');
+    expect(parseLine('CFG ANGLE=45 DIR=1 CAL=1').kind).toBe('unknown');
   });
 
-  it('解析 OK / ERR', () => {
+  it('OK / ERR', () => {
     expect(parseLine('OK saved')).toEqual({ kind: 'ack', ok: true, message: 'saved' });
-    expect(parseLine('ERR RANGE must be 1-20')).toEqual({ kind: 'ack', ok: false, message: 'RANGE must be 1-20' });
+    expect(parseLine('ERR ANGLE must be 15-75 (deg)')).toEqual({ kind: 'ack', ok: false, message: 'ANGLE must be 15-75 (deg)' });
+  });
+
+  it('韌體主版本', () => {
+    expect(firmwareMajor('3.0.0')).toBe(3);
+    expect(firmwareMajor('2.4.0')).toBe(2);
+    expect(firmwareMajor('?')).toBeNull();
   });
 });
 
 describe('buildCommand', () => {
-  it('產生與韌體相同的指令文字', () => {
+  it('產生指令文字', () => {
     expect(buildCommand({ type: 'get' })).toBe('GET');
-    expect(buildCommand({ type: 'testMode', enabled: false })).toBe('TEST 0');
-    expect(buildCommand({ type: 'minSpeed', mps: 1.5 })).toBe('MINSPD 1.5');
-    expect(buildCommand({ type: 'minEnergy', value: 50000 })).toBe('MINE 50000');
-    expect(buildCommand({ type: 'warnRange', meters: 12.25 })).toBe('RANGE 12.3');
-    expect(buildCommand({ type: 'approachSign', sign: -1 })).toBe('SIGN -1');
+    expect(buildCommand({ type: 'angle', deg: 42.5 })).toBe('ANGLE 42.5');
+    expect(buildCommand({ type: 'height', m: 0.706 })).toBe('HEIGHT 0.71');
+    expect(buildCommand({ type: 'direction', dir: -1 })).toBe('DIR -1');
+    expect(buildCommand({ type: 'model', model: 'rangeGeometry' })).toBe('MODEL 1');
+    expect(buildCommand({ type: 'model', model: 'fixedAngle' })).toBe('MODEL 0');
+    expect(buildCommand({ type: 'calibration', factor: 1.04251 })).toBe('CAL 1.0425');
+    expect(buildCommand({ type: 'radarThreshold', value: 8 })).toBe('RTHR 8');
+    expect(buildCommand({ type: 'wheel', mm: 2096 })).toBe('WHEEL 2096');
+    expect(buildCommand({ type: 'radialLimit', mps: 3.28 })).toBe('VMAX 3.28');
+    expect(buildCommand({ type: 'radialLimit', mps: 10 })).toBe('VMAX 10');
     expect(buildCommand({ type: 'defaults' })).toBe('DEFAULTS');
     expect(buildCommand({ type: 'reboot' })).toBe('REBOOT');
-    expect(buildCommand({ type: 'dangerTtc', seconds: 2 })).toBe('DTTC 2');
-    expect(buildCommand({ type: 'dangerDist', meters: 4.5 })).toBe('DDIST 4.5');
-    expect(buildCommand({ type: 'hold', ms: 1500 })).toBe('HOLD 1500');
-    expect(buildCommand({ type: 'confirm', hits: 2 })).toBe('CONFIRM 2');
-    expect(buildCommand({ type: 'radarThreshold', value: 10 })).toBe('RTHR 10');
-    expect(buildCommand({ type: 'wheel', mm: 2050 })).toBe('WHEEL 2050');
   });
 
-  it('數值超出範圍時丟出錯誤，不送出', () => {
-    expect(() => buildCommand({ type: 'minSpeed', mps: 20 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'warnRange', meters: 0.5 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'minEnergy', value: 1.5 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'minEnergy', value: -1 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'minSpeed', mps: Number.NaN })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'dangerTtc', seconds: 9 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'hold', ms: 150.5 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'confirm', hits: 0 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'radarThreshold', value: 0 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'radarThreshold', value: 51 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'radarThreshold', value: 5.5 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'wheel', mm: 999 })).toThrow(RangeError);
-    expect(() => buildCommand({ type: 'wheel', mm: 2105.5 })).toThrow(RangeError);
-  });
-
-  it('每個指令都小於 20 bytes（BLE 一次寫入）', () => {
-    expect(new TextEncoder().encode(`${buildCommand({ type: 'minEnergy', value: 100_000_000 })}\n`).length).toBeLessThan(20);
+  it('超出範圍或不是整數：丟出中文錯誤', () => {
+    expect(() => buildCommand({ type: 'angle', deg: 80 })).toThrow(/安裝角度/);
+    expect(() => buildCommand({ type: 'height', m: 0.1 })).toThrow(RangeError);
+    expect(() => buildCommand({ type: 'calibration', factor: 2.5 })).toThrow(/校正係數/);
+    expect(() => buildCommand({ type: 'radarThreshold', value: 5.5 })).toThrow(/整數/);
+    expect(() => buildCommand({ type: 'wheel', mm: Number.NaN })).toThrow(RangeError);
+    expect(() => buildCommand({ type: 'radialLimit', mps: 1 })).toThrow(/測速上限/);
   });
 });
 
 describe('diffConfig', () => {
-  const base: DeviceConfig = {
-    testMode: true,
-    minSpeedMps: 1.5,
-    minEnergy: 0,
-    warnRangeM: 15,
-    approachSign: -1,
-    dangerTtcS: 1.5,
-    dangerDistM: 4,
-    holdMs: 1000,
-    confirmHits: 3,
-    radarThreshold: 5,
-    wheelMm: 2105,
-    firmware: '2.4.0',
-  };
-
-  it('只送有改變的欄位', () => {
-    expect(diffConfig(base, { ...base })).toEqual([]);
-    expect(diffConfig(base, { ...base, testMode: false, minEnergy: 30000, holdMs: 2000, radarThreshold: 10, wheelMm: 2050 })).toEqual([
-      { type: 'testMode', enabled: false },
-      { type: 'minEnergy', value: 30000 },
-      { type: 'hold', ms: 2000 },
-      { type: 'radarThreshold', value: 10 },
-      { type: 'wheel', mm: 2050 },
+  it('只送有變的參數（以送出的精度比較）', () => {
+    expect(diffConfig(DEFAULT_CONFIG, { ...DEFAULT_CONFIG })).toEqual([]);
+    expect(diffConfig(DEFAULT_CONFIG, { ...DEFAULT_CONFIG, heightM: 0.70004 })).toEqual([]);
+    expect(diffConfig(DEFAULT_CONFIG, { ...DEFAULT_CONFIG, angleDeg: 40, direction: -1, calibration: 1.1 })).toEqual([
+      { type: 'angle', deg: 40 },
+      { type: 'direction', dir: -1 },
+      { type: 'calibration', factor: 1.1 },
     ]);
   });
+});
 
-  it('目標設定沒有雷達偵測門檻、輪周長（舊韌體）時不送 RTHR／WHEEL', () => {
-    expect(diffConfig(base, { ...base, radarThreshold: null, wheelMm: null })).toEqual([]);
+describe('unambiguousGroundMps', () => {
+  it('VMAX 3.28、俯角 45° → 約 16.7 km/h', () => {
+    expect(unambiguousGroundMps(3.28, 45) * 3.6).toBeCloseTo(16.7, 1);
+    expect(unambiguousGroundMps(10, 45) * 3.6).toBeCloseTo(50.9, 1);
+  });
+});
+
+describe('groundWindow（與韌體相同）', () => {
+  it('45°、0.70 m', () => {
+    const w = groundWindow(45, 0.7);
+    expect(w.minM).toBeCloseTo(0.7 / Math.sin((75 * Math.PI) / 180) - 0.1, 3);
+    expect(w.maxM).toBeCloseTo(0.7 / Math.sin((20 * Math.PI) / 180) + 0.1, 3);
+    expect(w.boresightM).toBeCloseTo(0.99, 2);
   });
 
+  it('很低的安裝：最近距離不小於 0.3 m', () => {
+    expect(groundWindow(30, 0.15).minM).toBeGreaterThanOrEqual(0.3);
+  });
 });

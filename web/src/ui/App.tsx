@@ -1,26 +1,16 @@
 /**
- * 【UI 層】App 外框：頂端列、導覽（手機底部分頁列 / 電腦左側導覽列）、提示訊息、分頁內容、危險光暈；套用深色 / 淺色主題。
+ * 【UI 層】App 外框：頂端列、導覽（手機底部分頁列 / 電腦左側選單）、提示訊息、分頁內容；套用深色 / 淺色主題。
  */
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useSettings } from '../application/container';
-import { DevicePage } from './features/device/DevicePage';
-import { HistoryPage } from './features/history/HistoryPage';
-import { RidePage } from './features/ride/RidePage';
+import { CalibratePage } from './features/calibrate/CalibratePage';
+import { DataPage } from './features/data/DataPage';
 import { SettingsPage } from './features/settings/SettingsPage';
-import { BikeIcon, CpuIcon, HistoryIcon, SettingsIcon, Toaster } from './kit';
-import { DangerFlash } from './shell/DangerFlash';
-import { SideNav } from './shell/SideNav';
-import { TabBar, type TabItem } from './shell/TabBar';
+import { SpeedPage } from './features/speed/SpeedPage';
+import { Toaster } from './kit';
+import { SideNav, TabBar } from './shell/Navigation';
+import { useTab } from './shell/tabs';
 import { TopBar } from './shell/TopBar';
-
-type Tab = 'ride' | 'history' | 'device' | 'settings';
-
-const TABS: Array<TabItem<Tab>> = [
-  { id: 'ride', label: '騎乘', Icon: BikeIcon },
-  { id: 'history', label: '紀錄', Icon: HistoryIcon },
-  { id: 'device', label: '裝置', Icon: CpuIcon },
-  { id: 'settings', label: '設定', Icon: SettingsIcon },
-];
 
 /** 依設定切換深色 / 淺色，跟隨系統時會即時反應 */
 function useApplyTheme(): void {
@@ -31,7 +21,7 @@ function useApplyTheme(): void {
       const dark = theme === 'dark' || (theme === 'system' && media.matches);
       document.documentElement.classList.toggle('dark', dark);
       // 與頂端列同色，手機瀏覽器的網址列才不會突兀
-      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#1a1b1e' : '#ffffff');
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#131518' : '#ffffff');
     };
     apply();
     media.addEventListener('change', apply);
@@ -40,29 +30,23 @@ function useApplyTheme(): void {
 }
 
 export function App() {
-  const [tab, setTab] = useState<Tab>('ride');
+  const [tab, select] = useTab();
   useApplyTheme();
 
-  const select = (id: Tab) => {
-    setTab(id);
-    window.scrollTo({ top: 0 });
-  };
-
   return (
-    <div className="min-h-dvh bg-canvas font-sans text-ink">
+    <div className="min-h-dvh bg-canvas font-sans text-fg antialiased">
       <TopBar />
-      <SideNav tabs={TABS} active={tab} onSelect={select} />
+      <SideNav active={tab} onSelect={select} />
       <Toaster />
-      <DangerFlash />
-      <main className="px-4 pt-4 pb-32 lg:pt-8 lg:pr-8 lg:pb-12 lg:pl-68">
+      <main className="px-4 pt-[calc(4.5rem+env(safe-area-inset-top))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pt-[calc(5.5rem+env(safe-area-inset-top))] lg:pr-8 lg:pb-10 lg:pl-64">
         <div className="mx-auto max-w-xl lg:max-w-6xl">
-          {tab === 'ride' && <RidePage />}
-          {tab === 'history' && <HistoryPage />}
-          {tab === 'device' && <DevicePage />}
+          {tab === 'speed' && <SpeedPage />}
+          {tab === 'calibrate' && <CalibratePage />}
+          {tab === 'data' && <DataPage />}
           {tab === 'settings' && <SettingsPage />}
         </div>
       </main>
-      <TabBar tabs={TABS} active={tab} onSelect={select} />
+      <TabBar active={tab} onSelect={select} />
     </div>
   );
 }

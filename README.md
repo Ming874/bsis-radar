@@ -1,154 +1,111 @@
-# BSIS・Radar A 後方來車偵測
+# BSIS 對地測速雷達
 
-> 「智慧自行車動力能源與盲區安全輔助整合系統」中的 **Radar A（後方來車偵測）** 子系統。
+> 「智慧自行車動力能源與盲區安全輔助整合系統」（BSIS）的**自身車速**子系統。
 > 國立彰化師範大學 電機與機械科技學系 專題製作｜指導教授：陳狄成｜組員：蔡宗穎、李振源、林芯瑜
 
-ESP32 讀取裝在座墊下方、朝後的 DFRobot C4001 24 GHz 毫米波雷達，判斷後方是否有車快速接近，再用藍牙把結果送到網頁，以**畫面顏色、嗶聲、震動、語音**提醒騎士。
+ESP32 讀取裝在後貨架尾端、**斜向下照路面**的 DFRobot C4001 24 GHz 毫米波雷達。韌體由路面回波的都卜勒速度估計自行車的對地速度與里程，以藍牙送到網頁顯示。
+
+3.0 起，這顆雷達的用途由「後方來車偵測」改為「對地測速」；後方來車改由另一套倒車雷達負責，不在這個 repo。舊版保留在 git 歷史（韌體 2.4.0，commit `8a5c3b6`）。
 
 <p align="center">
-  <img src="docs/images/phone-caution.png" width="240" alt="手機版：注意，後方來車 11.6 m">
-  <img src="docs/images/phone-danger.png" width="240" alt="手機版：危險，快速接近 3.4 m">
-  <img src="docs/images/phone-danger-dark.png" width="240" alt="手機版深色主題：危險">
+  <img src="docs/images/phone-speed.png" width="240" alt="手機版速度頁（深色）">
+  <img src="docs/images/phone-speed-light.png" width="240" alt="手機版速度頁（淺色）">
+  <img src="docs/images/phone-calibrate.png" width="240" alt="手機版校正頁：安裝幾何示意圖">
 </p>
 <p align="center">
-  <img src="docs/images/desktop-ride.png" width="760" alt="電腦版：左側選單、警示卡與距離趨勢圖">
+  <img src="docs/images/desktop-data.png" width="760" alt="電腦版數據頁：即時資料框、距離 × 徑向速度散佈圖、判斷統計">
 </p>
+<p align="center"><sub>截圖為示範模式（<code>?demo</code>）的模擬資料。</sub></p>
 
 | | 網址 |
 | --- | --- |
-| 網頁（手機、電腦都可以） | <https://bsis.mingchen.dev> |
+| 網頁（手機、電腦） | <https://bsis.mingchen.dev> |
+| 示範模式（不需要硬體） | <https://bsis.mingchen.dev/?demo> |
 | 原始碼 | <https://github.com/Ming874/bsis-radar> |
-
----
 
 ## 快速開始
 
 | 我想要… | 看這裡 |
 | --- | --- |
-| 第一次使用：從接線、燒錄、連線到上路，一步一步來 | **[上手文件](docs/GETTING_STARTED.md)** |
-| 把韌體燒進 ESP32（不用裝 Arduino IDE） | 雙擊 [`firmware/flash.bat`](firmware/flash.bat) |
-| 修改或編譯韌體 | [firmware/README.md](firmware/README.md) |
-| 修改或部署網頁 | [web/README.md](web/README.md) |
-| 了解 ESP32 ⇄ 網頁的資料格式（含自身車速） | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
-| 了解來車速度演算法（都卜勒 × 距離變化率交叉核對）與驗證結果 | [docs/ALGORITHM.md](docs/ALGORITHM.md) |
+| 第一次使用：接線、安裝、燒錄、校正、驗收 | **[上手文件](docs/GETTING_STARTED.md)** |
+| 把韌體燒進 ESP32（不需要 Arduino IDE） | 雙擊 [`firmware/flash.bat`](firmware/flash.bat) |
+| 了解原理、文獻、誤差分析與模擬結果 | [docs/ALGORITHM.md](docs/ALGORITHM.md) |
+| 了解 ESP32 ⇄ 網頁的資料格式與指令 | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
+| 修改韌體 | [firmware/README.md](firmware/README.md) |
+| 修改網頁 | [web/README.md](web/README.md) |
 
 ## 系統架構
 
 ```mermaid
 flowchart LR
   subgraph 自行車
-    A["Radar A<br/>C4001 朝後偵測"] -- "UART 9600" --> E["ESP32 韌體<br/>判斷來車・計算到達時間"]
-    B["輪速霍爾感測器<br/>自身車速（取代缺貨的 Radar B）"] -. "GPIO27（選用）" .-> E
-    P["發電花鼓 → 5 V（隊友）"] -. 供電 .-> E
+    G(("路面")) -. "24 GHz 回波" .-> A["C4001 雷達<br/>後貨架尾端、俯角 45°"]
+    A -- "UART 9600<br/>10 Hz 資料框" --> E["ESP32 韌體<br/>對地速度估計"]
+    H["輪速霍爾感測器<br/>（選用，參考值）"] -. "GPIO27" .-> E
   end
-  E -- "藍牙 BLE，每 0.2 秒" --> W["網頁<br/>bsis.mingchen.dev"]
-  W --> R(("騎士：畫面・嗶聲・震動・語音"))
+  E -- "藍牙 BLE<br/>每筆資料框一行" --> W["網頁<br/>bsis.mingchen.dev"]
+  E -- "USB 序列埠<br/>同一格式" --> P["電腦<br/>記錄、分析"]
 ```
 
-1. **雷達**（C4001，24 GHz FMCW）量測後方最強目標的距離、相對速度、反射能量（沒有角度）。
-2. **ESP32 韌體**用卡爾曼濾波器追蹤距離與接近速度，並把雷達的都卜勒速度與「距離變化率」交叉核對；篩選「正在接近、夠大」的目標，計算到達時間，分成 安全／注意／危險 三級。
-3. **網頁**透過 Web Bluetooth 接收資料並警示；不用安裝 App，Android 用 Chrome、電腦用 Chrome／Edge 開網址即可。
+**量測原理**：往前騎時，路面相對雷達向後退。雷達量到的徑向速度 v<sub>r</sub> = v·cos θ（θ 為俯角），所以
 
-## 主要功能
+```text
+v = CAL · |v_r| / cos θ
+```
 
-**ESP32 韌體（`firmware/`）**
+CAL 是現地校正得到的係數，吸收寬波束造成的偏差（[ALGORITHM.md](docs/ALGORITHM.md) §3）。
 
-- 非阻塞雷達驅動：不使用會卡住、可能當機的 DFRobot 函式庫；斷線自動重連、設定只在開機寫入一次
-- 來車判斷：卡爾曼濾波（距離 ＋ 都卜勒融合）、驗證閘門、累積確認、到達時間（TTC）分級、警示保持
-- **速度交叉核對**：都卜勒速度必須與距離變化率一致才採用；超過 36 km/h 的折疊自動還原、`SIGN` 設反自動修正並提示、速度不可信時改用距離變化率（模擬中舊版會漏掉的 3 種情況都能正確警示，見 [ALGORITHM.md](docs/ALGORITHM.md)）
-- 11 項參數可由網頁即時調整，存在 ESP32 的 NVS（斷電不消失），包括 C4001 雷達本身的偵測門檻（實測修正：舊版 30 太不靈敏，人不動時幾乎偵測不到，見 [ALGORITHM.md §10](docs/ALGORITHM.md)）與輪周長
-- 自身車速：輪子上的霍爾感測器（GPIO27）量輪速，騎乘頁顯示；沒接感測器時不顯示
-- 藍牙依 MTU 自動分段；USB 序列埠可直接下指令
-- 板上 LED 顯示狀態，不看手機也知道系統是否正常
+**韌體的處理**（[ALGORITHM.md](docs/ALGORITHM.md) §6）：
+- 逐筆有效性判斷：距離窗口、方向、外插資料框、靜止回波。
+- 雷達測速上限的折疊還原與自動調整。
+- 等加速度卡爾曼濾波：量測雜訊由二階差分自動估計，過程雜訊依加減速自動切換。
+- 靜止／擷取／追蹤／保持／中斷的狀態機。
+- 以量測值積分里程。
 
-**網頁（`web/`）**
+## 精度與限制
 
-- 騎乘畫面（iOS 小工具風格）：整張警示卡的顏色就是警示等級，圓體大字距離、直立雷達條、毛玻璃數值；危險時卡片外圈與畫面四周泛紅光
-- 警示：倒車雷達式嗶聲（越近越快）、震動、中文語音
-- 裝置頁：即時原始資料（含距離變化率與速度核對狀態）、室內測試／上路一鍵切換、11 項參數用滑桿調整並說明
-- 紀錄：60 秒距離趨勢、實車測試 CSV、來車事件列表
-- 手機版（底部分頁列）與電腦版（左側選單、雙欄、騎乘頁多一張趨勢圖）自動切換
-- 預設深色主題、橘色重點色（可切淺色白底）、可加入主畫面（PWA）、所有項目都有繁中說明
+| 項目 | 預期 | 依據 |
+| --- | --- | --- |
+| 校正後、同一路面 | 系統偏差約 ±1%；濾波後隨機誤差約 ±3～5% | 文獻與模擬（[ALGORITHM.md](docs/ALGORITHM.md) §9、§10） |
+| 換到其他乾燥路面 | 再加 ±1～3% | 寬波束的偏差隨路面改變 |
+| 潮濕、光滑路面 | 偏低 10～30%，或量不到 | 24 GHz 在鏡面般的路面回波很弱 |
+| 測速上限 | C4001 規格互相矛盾（徑向 3 或 10 m/s）。若是 3.28 m/s，45° 時約 16.7 km/h 以上靠折疊還原 | **驗收第一項**（[上手文件](docs/GETTING_STARTED.md) §10.1） |
+
+最有效的硬體改進是收窄雷達波束（透鏡或吸波罩），其次是與輪速感測器融合（[ALGORITHM.md](docs/ALGORITHM.md) §11）。
+
+## 目前狀態
+
+| 項目 | 狀態 |
+| --- | --- |
+| 韌體單元測試與模擬 | 318 項通過（`firmware\arduino.ps1 test`） |
+| 網頁單元測試、lint、型別檢查 | 56 項通過（`npm test`、`npm run lint`、`npm run build`） |
+| 實機（桌上） | 韌體 3.0.0 已燒錄；C4001 接受地面距離窗口（讀回 `getRange：0.620 2.400`），10 Hz 輸出正常 |
+| 實車驗收 | 待進行：[上手文件](docs/GETTING_STARTED.md) §10 的項目 A～G |
 
 ## 專案結構
 
 ```text
-BSIS/
-├─ README.md                 本檔：專案總覽
+bsis-radar/
+├─ README.md
 ├─ docs/
-│  ├─ GETTING_STARTED.md     上手文件：接線 → 燒錄 → 連線 → 校正 → 上路
-│  ├─ PROTOCOL.md            ESP32 ⇄ 網頁 的藍牙文字協定
-│  ├─ ALGORITHM.md           來車速度演算法、參數、驗證與參考文獻
-│  └─ images/                畫面截圖
-├─ firmware/                 ESP32 韌體
-│  ├─ RadarA_C4001_BLE/      Arduino 專案（分層：drivers / core / comm / storage / app）
-│  ├─ release/               預先編譯好的韌體（給 flash.bat 燒錄）
-│  ├─ tests/                 電腦端單元測試
-│  ├─ legacy/                舊版 v1（只供對照）
-│  ├─ flash.bat / flash.ps1  一鍵燒錄（不需 Arduino IDE）
-│  └─ arduino.ps1            開發用指令：編譯、燒錄、監看、測試、輸出 release
-└─ web/                      網頁（React + TypeScript + Vite + Tailwind）
-   └─ src/                   domain / infrastructure / application / ui（含設計系統 ui/kit）
+│  ├─ GETTING_STARTED.md   上手文件：材料 → 接線 → 安裝 → 燒錄 → 校正 → 驗收
+│  ├─ ALGORITHM.md         原理、C4001 規格查證、文獻、估計器設計、模擬結果、誤差預算
+│  ├─ PROTOCOL.md          ESP32 ⇄ 網頁的文字協定與 CSV 格式
+│  └─ images/              README 截圖
+├─ firmware/
+│  ├─ SpeedRadar/          ESP32 韌體（Arduino）
+│  ├─ tests/               電腦端單元測試與模擬器
+│  ├─ diagnostics/         C4001 直通程式、騎乘紀錄分析（analyze_ride.py）
+│  ├─ release/             預先編譯的韌體（給 flash.bat）
+│  ├─ arduino.ps1          編譯、燒錄、監看、測試、輸出 release
+│  └─ flash.bat / .ps1     一鍵燒錄
+└─ web/                    網頁（React + TypeScript + Vite），push 到 main 自動部署
 ```
 
-> 專題計畫書 PDF 含個人資料，沒有放進公開 repo。
+## 版本
 
-## 硬體
-
-| 元件 | 說明 |
-| --- | --- |
-| ESP32 DevKit（ESP32-WROOM，USB 晶片 CH340） | 主控與藍牙 |
-| ESP32 擴充底板 | 供電與排針；**它的 USB 孔只供電、不能燒錄** |
-| DFRobot C4001 mmWave 25 m（SEN0609） | 24 GHz FMCW，測距 25 m、測速 0.1～10 m/s、波束 100°×40°，UART 9600 |
-| 行動電源（測試）／發電花鼓＋穩壓（成品） | 5 V 供電，整套約 0.15～0.25 A（估計） |
-| Android 手機（Chrome）或電腦（Chrome／Edge） | 顯示與警示 |
-
-| C4001 腳位 | 接到 |
-| --- | --- |
-| VIN | 擴充底板 V（5 V） |
-| GND | 擴充底板 G |
-| TX | GPIO16（ESP32 RX2） |
-| RX | GPIO17（ESP32 TX2） |
-| OUT | 不接 |
-
-## 開發與測試
-
-```powershell
-# 韌體（在 firmware 資料夾）
-.\arduino.ps1 test       # 電腦端單元測試
-.\arduino.ps1 compile    # 編譯（ESP32 Dev Module）
-.\arduino.ps1 upload     # 燒錄（自動找 COM 埠）
-.\arduino.ps1 release    # 更新 release\，給 flash.bat 用
-```
-
-```bash
-# 網頁（在 web 資料夾）
-npm install
-npm run dev     # 開發伺服器
-npm test        # 單元測試
-npm run lint
-npm run build
-```
-
-## 部署
-
-網頁部署在 Zeabur（專案 `bsis-radar`），網域 <https://bsis.mingchen.dev>。Zeabur 連結這個 GitHub repo 的 `main` 分支，**push 之後會自動重新建置 `web/` 並上線**，不需要手動部署。
-
-## 實機測試結果（2026-10-03）
-
-| 項目 | 結果 |
-| --- | --- |
-| 燒錄與開機 | 成功；雷達約 4.8 秒完成設定並開始輸出 |
-| USB／藍牙指令、設定保存 | 正常；重開機後設定仍保留 |
-| 人走近 25 秒（4 次） | 接近時 41 筆中 34 筆警示（其餘為確認前 0.3～0.5 秒）；後退只在保持時間內警示 |
-| 距離追蹤 | 與雷達原始距離相差 0.03～0.07 m |
-| 正式網頁 ↔ 實機 | Chrome 連線、讀取設定、記錄到真實來車事件 |
-
-尚未做上路實測；請依[上手文件](docs/GETTING_STARTED.md)的步驟校正後再測。
-
-## 已知限制
-
-- C4001 只回報最強的一個目標、**沒有角度**：分不出來車在左方、右方或正後方，也分不出哪個車道。要分辨方向需要能輸出角度的雷達（例如 HLK-LD2451），或兩顆雷達分左右擺放。
-- 都卜勒測速上限 10 m/s（36 km/h 相對速度）：更快的來車由交叉核對還原或改用距離變化率（模擬驗證）；C4001 超過上限的實際行為仍待實車確認。
-- 網頁必須在前景（螢幕常亮）；iPhone Safari 不支援 Web Bluetooth（改用 Bluefy），Brave 需手動開啟。
-- 藍牙未加密：校正完成、正式上路前請把 `AppConfig.h` 的 `kAllowBleConfig` 改成 `false`。
+| 元件 | 版本 | 說明 |
+| --- | --- | --- |
+| 韌體 | 3.0.0 | 對地測速。藍牙名稱 `BSIS-Speed`，NVS 命名空間 `speedRadar` |
+| 網頁 | 2.0.0 | 對應韌體 3.x；連上 2.x 韌體時提示更新 |
+| 舊版 | 韌體 2.4.0／網頁 1.6.0 | 後方來車偵測，commit `8a5c3b6` |

@@ -1,57 +1,71 @@
 /**
  * 【領域層】資料型別。純 TypeScript，不依賴 React 或瀏覽器 API。
+ * 欄位與韌體 3.0 的 src/comm/Telemetry.h 對應，定義見 docs/PROTOCOL.md。
  */
 
-/** 0 安全 / 1 注意（確認來車在警示距離內）/ 2 危險（即將到達） */
-export type AlertLevel = 0 | 1 | 2;
+/** 估計器狀態（韌體 ST 欄位） */
+export type SpeedState = 'noRadar' | 'stopped' | 'acquiring' | 'tracking' | 'holding' | 'lost' | 'overRange';
 
-/**
- * 速度從哪裡來（韌體 VS 欄位）：都卜勒速度與「距離變化率」交叉核對的結果。
- * none 沒有追蹤 / checking 核對中 / doppler 都卜勒（已核對）/ unfolded 超過 10 m/s 折疊、已還原 /
- * rangeRate 都卜勒不可信、改用距離變化率 / signFlip 都卜勒正負號與距離變化相反（請檢查 SIGN）
- */
-export type VelocitySource = 'none' | 'checking' | 'doppler' | 'unfolded' | 'rangeRate' | 'signFlip';
+/** 每一筆雷達資料框的判斷結果（韌體 FV 欄位） */
+export type FrameVerdict =
+  | 'accepted'
+  | 'noTarget'
+  | 'repeated'
+  | 'outOfGate'
+  | 'wrongDirection'
+  | 'static'
+  | 'atLimit'
+  | 'outlier'
+  | 'acquiring'
+  | 'unfolded';
 
-/** ESP32 每 200 ms 送來的一筆遙測（欄位對應韌體 Telemetry.h） */
+/** 由單筆量測換算對地速度的方式（韌體 MODEL） */
+export type SpeedModel = 'fixedAngle' | 'rangeGeometry';
+
+/** ESP32 送來的一行遙測：每一筆雷達資料框一行（約 10 Hz），沒有資料時每 250 ms 一行心跳 */
 export interface Telemetry {
   radarOnline: boolean; // R
-  warning: boolean; // W
-  level: AlertLevel; // L
-  distanceM: number | null; // D：追蹤距離，沒目標為 null
-  closingMps: number | null; // V：接近速度，正值 = 越來越近
-  ttcS: number | null; // TTC：到達時間
-  rawTargets: number; // N：雷達原始目標數
-  rawRangeM: number | null; // RD：雷達原始距離
-  rawSpeedMps: number | null; // RV：雷達原始速度（雷達自己的正負號）
-  energy: number; // E：反射能量（追蹤中目標最近 5 筆偵測的中位數）
-  uptimeS: number; // T：ESP32 開機秒數
-  ownSpeedKmh: number | null; // S：自身車速（輪子上的霍爾感測器，選用；沒接時韌體不送）
-  velocitySource: VelocitySource | null; // VS：速度來源（韌體 2.1 起；舊韌體為 null）
-  rangeRateMps: number | null; // RR：由距離斜率算出的接近速度（正 = 接近），資料不足時為 null
-  trackDistanceM: number | null; // TD：雷達目前追蹤的目標距離（不論是不是來車；韌體 2.3 起，沒有追蹤時 null）
-  trackClosingMps: number | null; // TV：追蹤目標的接近速度（正 = 接近、負 = 遠離）
+  state: SpeedState; // ST
+  speedMps: number | null; // V：對地速度，未知時 null
+  sigmaMps: number; // SD：1σ 不確定度
+  qualityPct: number; // Q：最近 20 筆可用量測的比例
+  wrongDirPct: number; // WD：最近 20 筆方向相反的比例（DIR 可能設反）
+  frame: number; // FN：資料框序號，心跳時不變
+  targets: number; // N
+  rangeM: number | null; // RD：原始距離
+  radialMps: number | null; // RV：原始徑向速度（雷達自己的正負號）
+  energy: number; // E
+  groundMps: number | null; // G：這一筆換算的對地速度（濾波前）
+  verdict: FrameVerdict; // FV
+  radarDistanceM: number; // DR：雷達里程（開機起）
+  wheelMps: number | null; // W：輪速感測器（參考值），沒接時 null
+  wheelDistanceM: number | null; // DW
+  uptimeS: number; // T
   receivedAt: number; // 收到的時間（ms），由網頁填入
 }
 
-/** 裝置上可調整的偵測參數（對應韌體 CFG 回覆） */
+/** 裝置參數（韌體 CFG 回覆） */
 export interface DeviceConfig {
-  testMode: boolean; // TEST
-  minSpeedMps: number; // MINSPD
-  minEnergy: number; // MINE
-  warnRangeM: number; // RANGE
-  approachSign: -1 | 0 | 1; // SIGN
-  dangerTtcS: number; // DTTC
-  dangerDistM: number; // DDIST
-  holdMs: number; // HOLD
-  confirmHits: number; // CONFIRM
-  radarThreshold: number | null; // RTHR：C4001 雷達本身的偵測門檻（韌體 2.2 起；舊韌體不能調，為 null）
-  wheelMm: number | null; // WHEEL：輪周長 mm，算自身車速用（韌體 2.4 起；舊韌體為 null）
+  angleDeg: number; // ANGLE：視軸俯角
+  heightM: number; // HEIGHT：雷達離地高度
+  direction: 1 | -1; // DIR：1 朝後、-1 朝前
+  model: SpeedModel; // MODEL
+  calibration: number; // CAL
+  radarThreshold: number; // RTHR
+  wheelMm: number; // WHEEL
+  radialLimitMps: number; // VMAX：C4001 徑向測速上限
+  gateMinM: number; // RMIN：地面距離窗口（唯讀）
+  gateMaxM: number; // RMAX
   firmware: string; // FW
 }
+
+/** 可以修改的參數（不含唯讀的窗口與版本） */
+export type EditableConfig = Omit<DeviceConfig, 'gateMinM' | 'gateMaxM' | 'firmware'>;
 
 export type ParsedLine =
   | { kind: 'telemetry'; telemetry: Omit<Telemetry, 'receivedAt'> }
   | { kind: 'config'; config: DeviceConfig }
+  | { kind: 'legacyConfig'; firmware: string } // 3.0 以前（後方來車偵測版）的韌體
   | { kind: 'ack'; ok: boolean; message: string }
   | { kind: 'unknown'; text: string };
 
@@ -60,34 +74,29 @@ export type DeviceCommand =
   | { type: 'get' }
   | { type: 'defaults' }
   | { type: 'reboot' }
-  | { type: 'testMode'; enabled: boolean }
-  | { type: 'minSpeed'; mps: number }
-  | { type: 'minEnergy'; value: number }
-  | { type: 'warnRange'; meters: number }
-  | { type: 'approachSign'; sign: -1 | 0 | 1 }
-  | { type: 'dangerTtc'; seconds: number }
-  | { type: 'dangerDist'; meters: number }
-  | { type: 'hold'; ms: number }
-  | { type: 'confirm'; hits: number }
+  | { type: 'angle'; deg: number }
+  | { type: 'height'; m: number }
+  | { type: 'direction'; dir: 1 | -1 }
+  | { type: 'model'; model: SpeedModel }
+  | { type: 'calibration'; factor: number }
   | { type: 'radarThreshold'; value: number }
-  | { type: 'wheel'; mm: number };
+  | { type: 'wheel'; mm: number }
+  | { type: 'radialLimit'; mps: number };
 
-/** 一次「來車事件」：從開始警示到解除 */
-export interface ApproachEvent {
-  id: string;
-  startedAt: number;
-  endedAt: number;
-  durationS: number;
-  minDistanceM: number | null;
-  maxClosingMps: number | null;
-  minTtcS: number | null;
-  maxLevel: AlertLevel;
+/** 速度圖的一個點 */
+export interface SpeedPoint {
+  t: number;
+  speedMps: number | null;
+  wheelMps: number | null;
+  state: SpeedState;
 }
 
-/** 歷史圖表的一個點 */
-export interface HistoryPoint {
+/** 散佈圖與診斷用的一筆資料框 */
+export interface FrameSample {
   t: number;
-  distanceM: number | null;
-  level: AlertLevel;
-  energy: number;
+  frame: number;
+  rangeM: number | null;
+  radialMps: number | null;
+  groundMps: number | null;
+  verdict: FrameVerdict;
 }

@@ -1,47 +1,53 @@
 /**
- * 【領域層】ESP32 ⇄ 網頁的文字協定（與韌體 src/comm/Telemetry、CommandParser 對應）。
+ * 【領域層】ESP32 ⇄ 網頁的文字協定（與韌體 3.0 的 src/comm/Telemetry、CommandParser 對應，見 docs/PROTOCOL.md）。
  *
  * ESP32 → 網頁（每行以 '\n' 結尾）：
- *   R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35 VS=2 RR=6.11 TD=8.42 TV=6.20
- *   CFG TEST=1 MINSPD=1.50 MINE=0 RANGE=15.0 SIGN=-1 DTTC=1.5 DDIST=4.0 HOLD=1000 CONFIRM=3 RTHR=5 WHEEL=2105 FW=2.4.0
+ *   R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=0 DR=1234.5 W=5.51 DW=1240.2 T=812
+ *   CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=3.28 RMIN=0.62 RMAX=2.15 FW=3.0.0
  *   OK saved / ERR <原因>
- * 網頁 → ESP32：GET、TEST、MINSPD、MINE、RANGE、SIGN、DTTC、DDIST、HOLD、CONFIRM、RTHR、WHEEL、DEFAULTS、REBOOT
+ * 網頁 → ESP32：GET、ANGLE、HEIGHT、DIR、MODEL、CAL、RTHR、WHEEL、VMAX、DEFAULTS、REBOOT
  */
-import type { AlertLevel, DeviceCommand, DeviceConfig, ParsedLine, VelocitySource } from './types';
+import type { DeviceCommand, EditableConfig, FrameVerdict, ParsedLine, SpeedModel, SpeedState } from './types';
 
-/** 各參數允許範圍（與韌體 DetectionConfig.h 的 limits 相同） */
-export const COMMAND_LIMITS = {
-  minSpeedMps: { min: 0.05, max: 10 },
-  minEnergy: { min: 0, max: 100_000_000 },
-  warnRangeM: { min: 1, max: 20 },
-  dangerTtcS: { min: 0.5, max: 5 },
-  dangerDistM: { min: 1, max: 10 },
-  holdMs: { min: 200, max: 5000 },
-  confirmHits: { min: 1, max: 6 },
+/** 各參數允許範圍（與韌體 SpeedConfig.h 的 limits 相同） */
+export const LIMITS = {
+  angleDeg: { min: 15, max: 75 },
+  heightM: { min: 0.15, max: 1.5 },
+  calibration: { min: 0.5, max: 2 },
   radarThreshold: { min: 1, max: 50 },
   wheelMm: { min: 1000, max: 3000 },
+  radialLimitMps: { min: 2, max: 20 },
 } as const;
 
-/** C4001 的偵測門檻原廠預設值（韌體 2.2 起的預設；舊韌體固定用 30） */
-export const DEFAULT_RADAR_THRESHOLD = 5;
-
-/** 輪周長預設值（mm）：700×25C 公路車輪胎 */
-export const DEFAULT_WHEEL_MM = 2105;
-
-/** 韌體預設值（DetectionConfig::defaults） */
-export const DEFAULT_DEVICE_CONFIG: Omit<DeviceConfig, 'firmware'> = {
-  testMode: true,
-  minSpeedMps: 1.5,
-  minEnergy: 0,
-  warnRangeM: 15,
-  approachSign: -1,
-  dangerTtcS: 1.5,
-  dangerDistM: 4,
-  holdMs: 1000,
-  confirmHits: 3,
-  radarThreshold: DEFAULT_RADAR_THRESHOLD,
-  wheelMm: DEFAULT_WHEEL_MM,
+/** 韌體預設值（SpeedConfig::defaults） */
+export const DEFAULT_CONFIG: EditableConfig = {
+  angleDeg: 45,
+  heightM: 0.7,
+  direction: 1,
+  model: 'fixedAngle',
+  calibration: 1,
+  radarThreshold: 5,
+  wheelMm: 2105,
+  radialLimitMps: 3.28,
 };
+
+/** 這個網頁對應的韌體主版本 */
+export const FIRMWARE_MAJOR = 3;
+
+const STATES: readonly SpeedState[] = ['noRadar', 'stopped', 'acquiring', 'tracking', 'holding', 'lost', 'overRange'];
+const VERDICTS: readonly FrameVerdict[] = [
+  'accepted',
+  'noTarget',
+  'repeated',
+  'outOfGate',
+  'wrongDirection',
+  'static',
+  'atLimit',
+  'outlier',
+  'acquiring',
+  'unfolded',
+];
+const MODELS: readonly SpeedModel[] = ['fixedAngle', 'rangeGeometry'];
 
 /**
  * 把 "A=1 B=2" 拆成 Map（鍵一律轉大寫，順序不拘，格式不對的片段略過）。
@@ -66,55 +72,42 @@ function num(pairs: Map<string, string>, key: string): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
-/** 韌體用負數表示「沒有」（例如 D=-1） */
+/** 韌體用負數表示「沒有」（例如 V=-1、RD=-1、G=-1） */
 function nonNegative(value: number | undefined): number | null {
   return value !== undefined && value >= 0 ? value : null;
 }
 
-const VELOCITY_SOURCES: readonly VelocitySource[] = ['none', 'checking', 'doppler', 'unfolded', 'rangeRate', 'signFlip'];
-
-function toVelocitySource(value: number | undefined): VelocitySource | null {
-  if (value === undefined || !Number.isInteger(value)) return null;
-  return VELOCITY_SOURCES[value] ?? null;
-}
-
-function toLevel(value: number | undefined, warning: boolean): AlertLevel {
-  if (value === 2) return 2;
-  if (value === 1) return 1;
-  if (value === 0) return 0;
-  return warning ? 1 : 0;
+function pick<T>(list: readonly T[], index: number | undefined, fallback: T): T {
+  if (index === undefined || !Number.isInteger(index)) return fallback;
+  return list[index] ?? fallback;
 }
 
 function parseTelemetry(text: string): ParsedLine {
   const p = parsePairs(text);
-  if (!p || (!p.has('R') && !p.has('L') && !p.has('D'))) return { kind: 'unknown', text };
+  if (!p || !p.has('R') || !p.has('ST') || !p.has('V')) return { kind: 'unknown', text };
 
-  const warningFlag = num(p, 'W') === 1;
-  const level = toLevel(num(p, 'L'), warningFlag);
-  const distanceM = nonNegative(num(p, 'D'));
-  const rawTargets = Math.max(0, Math.round(num(p, 'N') ?? 0));
-  const closing = num(p, 'V');
-  const trackDistanceM = nonNegative(num(p, 'TD'));
-
+  const targets = Math.max(0, Math.round(num(p, 'N') ?? 0));
+  const wheelMps = num(p, 'W');
   return {
     kind: 'telemetry',
     telemetry: {
       radarOnline: num(p, 'R') === 1,
-      warning: warningFlag || level > 0,
-      level,
-      distanceM,
-      closingMps: distanceM !== null && closing !== undefined ? closing : null,
-      ttcS: nonNegative(num(p, 'TTC')),
-      rawTargets,
-      rawRangeM: rawTargets > 0 ? nonNegative(num(p, 'RD')) : null,
-      rawSpeedMps: rawTargets > 0 ? (num(p, 'RV') ?? null) : null,
+      state: pick(STATES, num(p, 'ST'), 'noRadar'),
+      speedMps: nonNegative(num(p, 'V')),
+      sigmaMps: Math.max(0, num(p, 'SD') ?? 0),
+      qualityPct: Math.min(100, Math.max(0, num(p, 'Q') ?? 0)),
+      wrongDirPct: Math.min(100, Math.max(0, num(p, 'WD') ?? 0)),
+      frame: Math.max(0, num(p, 'FN') ?? 0),
+      targets,
+      rangeM: targets > 0 ? nonNegative(num(p, 'RD')) : null,
+      radialMps: targets > 0 ? (num(p, 'RV') ?? null) : null,
       energy: Math.max(0, num(p, 'E') ?? 0),
+      groundMps: nonNegative(num(p, 'G')),
+      verdict: pick(VERDICTS, num(p, 'FV'), 'noTarget'),
+      radarDistanceM: Math.max(0, num(p, 'DR') ?? 0),
+      wheelMps: wheelMps === undefined ? null : Math.max(0, wheelMps),
+      wheelDistanceM: wheelMps === undefined ? null : Math.max(0, num(p, 'DW') ?? 0),
       uptimeS: Math.max(0, num(p, 'T') ?? 0),
-      ownSpeedKmh: num(p, 'S') ?? null,
-      velocitySource: toVelocitySource(num(p, 'VS')),
-      rangeRateMps: num(p, 'RR') ?? null,
-      trackDistanceM,
-      trackClosingMps: trackDistanceM !== null ? (num(p, 'TV') ?? null) : null,
     },
   };
 }
@@ -122,33 +115,33 @@ function parseTelemetry(text: string): ParsedLine {
 function parseConfig(text: string): ParsedLine {
   const p = parsePairs(text.slice(3));
   if (!p) return { kind: 'unknown', text };
-  const test = num(p, 'TEST');
-  const minSpeed = num(p, 'MINSPD');
-  const minEnergy = num(p, 'MINE');
-  const range = num(p, 'RANGE');
-  const sign = num(p, 'SIGN');
-  if (test === undefined || minSpeed === undefined || minEnergy === undefined || range === undefined) {
+  const firmware = p.get('FW') ?? '?';
+  // 3.0 以前的韌體是後方來車偵測版（TEST、MINSPD…），協定不相容
+  if (p.has('TEST') || p.has('MINSPD')) return { kind: 'legacyConfig', firmware };
+
+  const angle = num(p, 'ANGLE');
+  const height = num(p, 'HEIGHT');
+  const dir = num(p, 'DIR');
+  const model = num(p, 'MODEL');
+  const cal = num(p, 'CAL');
+  if (angle === undefined || height === undefined || cal === undefined || (dir !== 1 && dir !== -1)) {
     return { kind: 'unknown', text };
   }
-  if (sign !== -1 && sign !== 0 && sign !== 1) return { kind: 'unknown', text };
-  const d = DEFAULT_DEVICE_CONFIG;
+  const d = DEFAULT_CONFIG;
   return {
     kind: 'config',
     config: {
-      testMode: test === 1,
-      minSpeedMps: minSpeed,
-      minEnergy,
-      warnRangeM: range,
-      approachSign: sign,
-      // 較舊的韌體沒有這四個欄位時用預設值
-      dangerTtcS: num(p, 'DTTC') ?? d.dangerTtcS,
-      dangerDistM: num(p, 'DDIST') ?? d.dangerDistM,
-      holdMs: num(p, 'HOLD') ?? d.holdMs,
-      confirmHits: num(p, 'CONFIRM') ?? d.confirmHits,
-      // 2.2 以前的韌體沒有 RTHR（雷達門檻寫死、不能調），不能用預設值假裝
-      radarThreshold: num(p, 'RTHR') ?? null,
-      wheelMm: num(p, 'WHEEL') ?? null,
-      firmware: p.get('FW') ?? '?',
+      angleDeg: angle,
+      heightM: height,
+      direction: dir,
+      model: pick(MODELS, model, d.model),
+      calibration: cal,
+      radarThreshold: num(p, 'RTHR') ?? d.radarThreshold,
+      wheelMm: num(p, 'WHEEL') ?? d.wheelMm,
+      radialLimitMps: num(p, 'VMAX') ?? d.radialLimitMps,
+      gateMinM: num(p, 'RMIN') ?? 0,
+      gateMaxM: num(p, 'RMAX') ?? 0,
+      firmware,
     },
   };
 }
@@ -166,14 +159,20 @@ export function parseLine(line: string): ParsedLine {
   return parseTelemetry(text);
 }
 
+/** 韌體版本字串的主版本（"3.0.1" → 3；看不懂時 null） */
+export function firmwareMajor(version: string): number | null {
+  const m = /^(\d+)\./.exec(version);
+  return m?.[1] ? Number(m[1]) : null;
+}
+
 function assertRange(value: number, limits: { min: number; max: number }, name: string): void {
   if (!Number.isFinite(value) || value < limits.min || value > limits.max) {
-    throw new RangeError(`${name} 必須介於 ${limits.min} 到 ${limits.max}`);
+    throw new RangeError(`${name}必須介於 ${limits.min} 到 ${limits.max}`);
   }
 }
 
 function assertInteger(value: number, name: string): void {
-  if (!Number.isInteger(value)) throw new RangeError(`${name} 必須是整數`);
+  if (!Number.isInteger(value)) throw new RangeError(`${name}必須是整數`);
 }
 
 /** 把小數多餘的 0 去掉：1.50 → "1.5" */
@@ -181,9 +180,8 @@ function compact(value: number, digits: number): string {
   return String(Number(value.toFixed(digits)));
 }
 
-/** 產生要送給 ESP32 的指令文字（不含換行）；數值超出範圍會丟 RangeError */
+/** 產生要送給 ESP32 的指令文字（不含換行）；數值超出範圍會丟 RangeError（訊息為中文） */
 export function buildCommand(cmd: DeviceCommand): string {
-  const L = COMMAND_LIMITS;
   switch (cmd.type) {
     case 'get':
       return 'GET';
@@ -191,60 +189,65 @@ export function buildCommand(cmd: DeviceCommand): string {
       return 'DEFAULTS';
     case 'reboot':
       return 'REBOOT';
-    case 'testMode':
-      return `TEST ${cmd.enabled ? 1 : 0}`;
-    case 'minSpeed':
-      assertRange(cmd.mps, L.minSpeedMps, '接近速度門檻');
-      return `MINSPD ${compact(cmd.mps, 2)}`;
-    case 'minEnergy':
-      assertRange(cmd.value, L.minEnergy, '能量門檻');
-      assertInteger(cmd.value, '能量門檻');
-      return `MINE ${cmd.value}`;
-    case 'warnRange':
-      assertRange(cmd.meters, L.warnRangeM, '警示距離');
-      return `RANGE ${compact(cmd.meters, 1)}`;
-    case 'approachSign':
-      return `SIGN ${cmd.sign}`;
-    case 'dangerTtc':
-      assertRange(cmd.seconds, L.dangerTtcS, '危險到達時間');
-      return `DTTC ${compact(cmd.seconds, 1)}`;
-    case 'dangerDist':
-      assertRange(cmd.meters, L.dangerDistM, '危險距離');
-      return `DDIST ${compact(cmd.meters, 1)}`;
-    case 'hold':
-      assertRange(cmd.ms, L.holdMs, '警示保持時間');
-      assertInteger(cmd.ms, '警示保持時間');
-      return `HOLD ${cmd.ms}`;
-    case 'confirm':
-      assertRange(cmd.hits, L.confirmHits, '確認筆數');
-      assertInteger(cmd.hits, '確認筆數');
-      return `CONFIRM ${cmd.hits}`;
+    case 'angle':
+      assertRange(cmd.deg, LIMITS.angleDeg, '安裝角度');
+      return `ANGLE ${compact(cmd.deg, 1)}`;
+    case 'height':
+      assertRange(cmd.m, LIMITS.heightM, '安裝高度');
+      return `HEIGHT ${compact(cmd.m, 2)}`;
+    case 'direction':
+      return `DIR ${cmd.dir}`;
+    case 'model':
+      return `MODEL ${cmd.model === 'rangeGeometry' ? 1 : 0}`;
+    case 'calibration':
+      assertRange(cmd.factor, LIMITS.calibration, '校正係數');
+      return `CAL ${compact(cmd.factor, 4)}`;
     case 'radarThreshold':
-      assertRange(cmd.value, L.radarThreshold, '雷達偵測門檻');
-      assertInteger(cmd.value, '雷達偵測門檻');
+      assertRange(cmd.value, LIMITS.radarThreshold, '雷達門檻');
+      assertInteger(cmd.value, '雷達門檻');
       return `RTHR ${cmd.value}`;
     case 'wheel':
-      assertRange(cmd.mm, L.wheelMm, '輪周長');
+      assertRange(cmd.mm, LIMITS.wheelMm, '輪周長');
       assertInteger(cmd.mm, '輪周長');
       return `WHEEL ${cmd.mm}`;
+    case 'radialLimit':
+      assertRange(cmd.mps, LIMITS.radialLimitMps, '雷達測速上限');
+      return `VMAX ${compact(cmd.mps, 2)}`;
   }
 }
 
-/** 比較兩份設定，回傳需要送出的指令（只送有變的） */
-export function diffConfig(current: DeviceConfig, next: DeviceConfig): DeviceCommand[] {
+/** 比較兩份設定，回傳需要送出的指令（只送有變的；數值以送出的精度比較） */
+export function diffConfig(current: EditableConfig, next: EditableConfig): DeviceCommand[] {
+  const same = (a: number, b: number, digits: number) => a.toFixed(digits) === b.toFixed(digits);
   const cmds: DeviceCommand[] = [];
-  if (current.testMode !== next.testMode) cmds.push({ type: 'testMode', enabled: next.testMode });
-  if (current.minSpeedMps !== next.minSpeedMps) cmds.push({ type: 'minSpeed', mps: next.minSpeedMps });
-  if (current.minEnergy !== next.minEnergy) cmds.push({ type: 'minEnergy', value: next.minEnergy });
-  if (current.warnRangeM !== next.warnRangeM) cmds.push({ type: 'warnRange', meters: next.warnRangeM });
-  if (current.approachSign !== next.approachSign) cmds.push({ type: 'approachSign', sign: next.approachSign });
-  if (current.dangerTtcS !== next.dangerTtcS) cmds.push({ type: 'dangerTtc', seconds: next.dangerTtcS });
-  if (current.dangerDistM !== next.dangerDistM) cmds.push({ type: 'dangerDist', meters: next.dangerDistM });
-  if (current.holdMs !== next.holdMs) cmds.push({ type: 'hold', ms: next.holdMs });
-  if (current.confirmHits !== next.confirmHits) cmds.push({ type: 'confirm', hits: next.confirmHits });
-  if (next.radarThreshold !== null && current.radarThreshold !== next.radarThreshold) {
-    cmds.push({ type: 'radarThreshold', value: next.radarThreshold });
-  }
-  if (next.wheelMm !== null && current.wheelMm !== next.wheelMm) cmds.push({ type: 'wheel', mm: next.wheelMm });
+  if (!same(current.angleDeg, next.angleDeg, 1)) cmds.push({ type: 'angle', deg: next.angleDeg });
+  if (!same(current.heightM, next.heightM, 2)) cmds.push({ type: 'height', m: next.heightM });
+  if (current.direction !== next.direction) cmds.push({ type: 'direction', dir: next.direction });
+  if (current.model !== next.model) cmds.push({ type: 'model', model: next.model });
+  if (!same(current.calibration, next.calibration, 4)) cmds.push({ type: 'calibration', factor: next.calibration });
+  if (current.radarThreshold !== next.radarThreshold) cmds.push({ type: 'radarThreshold', value: next.radarThreshold });
+  if (current.wheelMm !== next.wheelMm) cmds.push({ type: 'wheel', mm: next.wheelMm });
+  if (!same(current.radialLimitMps, next.radialLimitMps, 2)) cmds.push({ type: 'radialLimit', mps: next.radialLimitMps });
   return cmds;
+}
+
+/**
+ * 雷達「不模糊」的最高對地速度（m/s）：徑向速度 = 對地速度 × cos θ，超過 VMAX 之後 C4001 的讀值會折疊
+ * （韌體靠連續追蹤還原，見 docs/ALGORITHM.md §2）。
+ */
+export function unambiguousGroundMps(radialLimitMps: number, angleDeg: number, calibration = 1): number {
+  return (calibration * radialLimitMps) / Math.cos((angleDeg * Math.PI) / 180);
+}
+
+/** 由安裝角度與高度算出的地面距離窗口（與韌體 groundWindow 相同，網頁預覽用） */
+export function groundWindow(angleDeg: number, heightM: number): { minM: number; maxM: number; boresightM: number } {
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const steep = clamp(angleDeg + 30, 8, 85);
+  const shallow = clamp(angleDeg - 25, 8, 85);
+  return {
+    minM: Math.max(0.3, heightM / Math.sin(rad(steep)) - 0.1),
+    maxM: Math.min(25, heightM / Math.sin(rad(shallow)) + 0.1),
+    boresightM: heightM / Math.sin(rad(angleDeg)),
+  };
 }

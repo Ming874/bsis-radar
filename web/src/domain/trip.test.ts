@@ -1,0 +1,79 @@
+import { describe, expect, it } from 'vitest';
+import { TripMeter, averageMps } from './trip';
+import type { Telemetry } from './types';
+
+function tele(at: number, patch: Partial<Telemetry>): Telemetry {
+  return {
+    radarOnline: true,
+    state: 'tracking',
+    speedMps: 5,
+    sigmaMps: 0.1,
+    qualityPct: 100,
+    wrongDirPct: 0,
+    frame: 0,
+    targets: 1,
+    rangeM: 0.9,
+    radialMps: 3.5,
+    energy: 1000,
+    groundMps: 5,
+    verdict: 'accepted',
+    radarDistanceM: 0,
+    wheelMps: null,
+    wheelDistanceM: null,
+    uptimeS: Math.floor(at / 1000),
+    receivedAt: at,
+    ...patch,
+  };
+}
+
+describe('TripMeter', () => {
+  it('里程用韌體的雷達里程差值累加；移動時間只算在動的時候', () => {
+    const trip = new TripMeter(0);
+    // 10 秒 5 m/s（10 Hz），再停 5 秒
+    for (let k = 0; k <= 100; k++) trip.update(tele(k * 100, { radarDistanceM: 100 + k * 0.5 }));
+    for (let k = 101; k <= 150; k++) trip.update(tele(k * 100, { radarDistanceM: 150, speedMps: 0, state: 'stopped' }));
+    const s = trip.snapshot();
+    expect(s.distanceM).toBeCloseTo(50, 6);
+    expect(s.movingS).toBeCloseTo(10, 1);
+    expect(s.maxMps).toBe(5);
+    expect(averageMps(s)).toBeCloseTo(5, 1);
+  });
+
+  it('韌體重開機（DR 歸零）不會出現負的距離', () => {
+    const trip = new TripMeter(0);
+    trip.update(tele(0, { radarDistanceM: 500, uptimeS: 100 }));
+    trip.update(tele(100, { radarDistanceM: 510, uptimeS: 100 }));
+    trip.update(tele(200, { radarDistanceM: 0, uptimeS: 0 }));
+    trip.update(tele(300, { radarDistanceM: 4, uptimeS: 0 }));
+    expect(trip.snapshot().distanceM).toBeCloseTo(14, 6);
+  });
+
+  it('藍牙中斷期間韌體照樣積分：重新連上後的差值算進去，但不算移動時間', () => {
+    const trip = new TripMeter(0);
+    trip.update(tele(0, { radarDistanceM: 0 }));
+    trip.update(tele(30_000, { radarDistanceM: 150 }));
+    expect(trip.snapshot().distanceM).toBe(150);
+    expect(trip.snapshot().movingS).toBe(0);
+  });
+
+  it('輪速感測器的里程', () => {
+    const trip = new TripMeter(0);
+    trip.update(tele(0, { radarDistanceM: 0, wheelDistanceM: 10, wheelMps: 5 }));
+    trip.update(tele(100, { radarDistanceM: 0.5, wheelDistanceM: 10.52, wheelMps: 5 }));
+    expect(trip.snapshot().wheelDistanceM).toBeCloseTo(0.52, 6);
+    const noWheel = new TripMeter(0);
+    noWheel.update(tele(0, {}));
+    expect(noWheel.snapshot().wheelDistanceM).toBeNull();
+  });
+
+  it('重設：從下一筆開始重新累加', () => {
+    const trip = new TripMeter(0);
+    trip.update(tele(0, { radarDistanceM: 0 }));
+    trip.update(tele(100, { radarDistanceM: 20 }));
+    trip.reset(200);
+    trip.update(tele(300, { radarDistanceM: 25 }));
+    expect(trip.snapshot().distanceM).toBe(5);
+    expect(trip.snapshot().startedAt).toBe(200);
+    expect(averageMps(trip.snapshot())).toBeNull();
+  });
+});

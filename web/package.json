@@ -1,8 +1,8 @@
 {
-  "name": "radar-a-web",
+  "name": "bsis-speed-web",
   "private": true,
-  "version": "1.6.0",
-  "description": "Radar A 後方來車警示：手機網頁儀表板（Web Bluetooth）",
+  "version": "2.0.0",
+  "description": "BSIS 對地測速：C4001 毫米波雷達的網頁儀表板（Web Bluetooth）",
   "type": "module",
   "engines": {
     "node": ">=20.19"

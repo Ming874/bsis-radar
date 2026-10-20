@@ -15,7 +15,10 @@ export const NUS = {
   tx: '6e400003-b5a3-f393-e0a9-e50e24dcca9e', // ESP32 → 網頁
 } as const;
 
-export const DEVICE_NAME_PREFIX = 'RadarA';
+export const DEVICE_NAME_PREFIX = 'BSIS';
+/** 3.0 以前的韌體（後方來車偵測版）用的名稱：仍可連線，網頁會提示更新韌體 */
+const LEGACY_NAME_PREFIX = 'RadarA';
+const isOurDevice = (name: string | undefined) => !!name && (name.startsWith(DEVICE_NAME_PREFIX) || name.startsWith(LEGACY_NAME_PREFIX));
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000];
 const MAX_RECONNECT_DELAY_MS = 10000;
 
@@ -58,7 +61,7 @@ export class WebBluetoothTransport implements RadarTransport {
     if (!isWebBluetoothAvailable()) throw new Error('這個瀏覽器不支援 Web Bluetooth');
     this.manualDisconnect = false;
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: DEVICE_NAME_PREFIX }, { services: [NUS.service] }],
+      filters: [{ namePrefix: DEVICE_NAME_PREFIX }, { namePrefix: LEGACY_NAME_PREFIX }, { services: [NUS.service] }],
       optionalServices: [NUS.service],
     });
     this.attach(device);
@@ -69,7 +72,7 @@ export class WebBluetoothTransport implements RadarTransport {
   async reconnectKnownDevice(): Promise<boolean> {
     if (!isWebBluetoothAvailable() || typeof navigator.bluetooth.getDevices !== 'function') return false;
     const devices = await navigator.bluetooth.getDevices();
-    const device = devices.find((d) => d.name?.startsWith(DEVICE_NAME_PREFIX));
+    const device = devices.find((d) => isOurDevice(d.name));
     if (!device) return false;
     this.manualDisconnect = false;
     this.attach(device);

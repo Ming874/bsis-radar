@@ -9,7 +9,7 @@ function chunks(text: string, size: number): string[] {
 }
 
 describe('LineAssembler', () => {
-  const line = 'R=1 W=1 L=2 D=8.42 V=6.20 TTC=1.4 N=1 RD=8.50 RV=-6.31 E=52000 T=35';
+  const line = 'R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=0 DR=1234.5 T=812';
 
   it('把 20 bytes 的分段組回一行', () => {
     const a = new LineAssembler();
@@ -19,8 +19,8 @@ describe('LineAssembler', () => {
 
   it('一段裡有好幾行，也能全部取出', () => {
     const a = new LineAssembler();
-    expect(a.push('OK saved\nCFG TEST=1\nR=1')).toEqual(['OK saved', 'CFG TEST=1']);
-    expect(a.push(' L=0\n')).toEqual(['R=1 L=0']);
+    expect(a.push('OK saved\nCFG ANGLE=45.0\nR=1')).toEqual(['OK saved', 'CFG ANGLE=45.0']);
+    expect(a.push(' ST=1\n')).toEqual(['R=1 ST=1']);
   });
 
   it('接受 \\r\\n 並略過空行', () => {
@@ -36,7 +36,7 @@ describe('LineAssembler', () => {
 
   it('reset 清掉半行', () => {
     const a = new LineAssembler();
-    a.push('R=1 L=');
+    a.push('R=1 ST=');
     a.reset();
     expect(a.push('OK\n')).toEqual(['OK']);
   });

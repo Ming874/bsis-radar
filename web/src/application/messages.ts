@@ -3,23 +3,20 @@
  */
 
 const ACK_TEXT: Array<[RegExp, string]> = [
-  [/^saved$/i, '設定已儲存到 ESP32，斷電也不會消失'],
+  [/^saved$/i, '已儲存到 ESP32，斷電也不會消失'],
   [/^applied \(flash save failed\)/i, '已套用，但存入 ESP32 失敗；重新開機後會恢復舊設定'],
   [/^reboot$/i, 'ESP32 重新開機中，約 5 秒後恢復'],
   [/^commands:/i, '可用指令已列在主控台'],
-  [/^TEST must be/i, '測試模式只能是開（1）或關（0）'],
-  [/^MINSPD must be/i, '接近速度門檻必須介於 0.05 ～ 10 m/s'],
-  [/^MINE must be/i, '能量門檻必須是 0 ～ 100,000,000 的整數'],
-  [/^RANGE must be/i, '警示距離必須介於 1 ～ 20 公尺'],
-  [/^SIGN must be/i, '接近方向只能是 -1、0 或 1'],
-  [/^DTTC must be/i, '危險到達時間必須介於 0.5 ～ 5 秒'],
-  [/^DDIST must be/i, '危險距離必須介於 1 ～ 10 公尺'],
-  [/^HOLD must be/i, '警示保持時間必須是 200 ～ 5000 的整數（毫秒）'],
-  [/^CONFIRM must be/i, '確認筆數必須是 1 ～ 6 的整數'],
-  [/^RTHR must be/i, '雷達偵測門檻必須是 1 ～ 50 的整數'],
+  [/^ANGLE must be/i, '安裝角度必須介於 15° ～ 75°'],
+  [/^HEIGHT must be/i, '安裝高度必須介於 0.15 ～ 1.50 m'],
+  [/^DIR must be/i, '雷達朝向只能是朝後（1）或朝前（-1）'],
+  [/^MODEL must be/i, '速度模型只能是 0（固定角度）或 1（距離幾何）'],
+  [/^CAL must be/i, '校正係數必須介於 0.5 ～ 2.0'],
+  [/^RTHR must be/i, '雷達門檻必須是 1 ～ 50 的整數'],
   [/^WHEEL must be/i, '輪周長必須是 1000 ～ 3000 的整數（mm）'],
+  [/^VMAX must be/i, '雷達測速上限必須介於 2 ～ 20 m/s'],
   [/^missing or bad value/i, '指令缺少數值或格式不正確'],
-  [/^unknown command/i, 'ESP32 不認得這個指令，輸入 HELP 可查看可用指令'],
+  [/^unknown command/i, 'ESP32 不認得這個指令；輸入 HELP 可查看可用指令'],
   [/^settings over Bluetooth are disabled/i, 'ESP32 已關閉「藍牙修改設定」，請改用 USB 序列埠修改'],
 ];
 
@@ -46,7 +43,7 @@ export function describeConnectionError(e: unknown): string | null {
     return '瀏覽器的藍牙權限被封鎖：請到「網站設定」允許藍牙；Android 也要在系統設定允許瀏覽器使用「附近裝置」';
   }
   if (/No Services matching UUID|getPrimaryService|No Characteristics/i.test(message)) {
-    return '找不到雷達服務：選到的裝置可能不是 RadarA-ESP32';
+    return '找不到雷達服務：選到的裝置可能不是 BSIS-Speed';
   }
   if (/cancel/i.test(message)) return null; // 使用者關掉選擇視窗
   if (name === 'SecurityError') return '瀏覽器拒絕使用藍牙：網頁必須用 HTTPS 開啟';
