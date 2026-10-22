@@ -1,9 +1,9 @@
 /**
- * 【UI 層】頂端列：產品名稱、連線狀態（點了看連線詳情與中斷 / 重新連線）。
+ * 【UI 層】頂端列：產品名稱、超速標記（在其他分頁也看得到）、連線狀態（點了看連線詳情與中斷 / 重新連線）。
  */
 import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { actions, capabilities, isDemo, useRadar } from '../../application/container';
+import { actions, capabilities, isDemo, useOverspeed, useRadar } from '../../application/container';
 import { selectLink } from '../../application/selectors';
 import { formatDuration } from '../../domain/units';
 import { Button, Dialog, FOCUS_RING, KeyValue, LogoMark, StatusDot } from '../kit';
@@ -93,6 +93,7 @@ export function TopBar() {
     useShallow((r) => selectLink({ connection: r.connection, stale: r.stale, telemetry: r.telemetry, legacyFirmware: r.legacyFirmware })),
   );
   const deviceName = useRadar((r) => r.connection.deviceName);
+  const over = useOverspeed((o) => o.active);
   return (
     <header className="fixed inset-x-0 top-0 z-30 border-b border-line bg-panel pt-[env(safe-area-inset-top)]">
       <div className="flex h-14 items-center justify-between gap-3 px-4 lg:px-5">
@@ -101,6 +102,7 @@ export function TopBar() {
           <span className="text-value font-semibold tracking-tight text-fg">BSIS 測速</span>
           <span className="hidden text-label text-subtle sm:inline">毫米波雷達對地測速</span>
           {isDemo && <span className="rounded-sm border border-warn/50 px-1.5 py-0.5 text-[11px] text-warn">示範資料</span>}
+          {over && <span className="rounded-sm border border-bad px-1.5 py-0.5 text-[11px] font-medium text-bad">超速</span>}
         </div>
         <button
           type="button"

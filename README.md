@@ -31,6 +31,7 @@ ESP32 讀取裝在後貨架尾端、**斜向下照路面**的 DFRobot C4001 24 G
 | 把韌體燒進 ESP32（不需要 Arduino IDE） | 雙擊 [`firmware/flash.bat`](firmware/flash.bat) |
 | 了解原理、文獻、誤差分析與模擬結果 | [docs/ALGORITHM.md](docs/ALGORITHM.md) |
 | 了解 ESP32 ⇄ 網頁的資料格式與指令 | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
+| 了解超速警示（預設 25 km/h）的規則與限制 | [docs/SPEED_ALERT.md](docs/SPEED_ALERT.md) |
 | 修改韌體 | [firmware/README.md](firmware/README.md) |
 | 修改網頁 | [web/README.md](web/README.md) |
 
@@ -62,6 +63,8 @@ CAL 是現地校正得到的係數，吸收寬波束造成的偏差（[ALGORITHM
 - 靜止／擷取／追蹤／保持／中斷的狀態機。
 - 以量測值積分里程。
 
+**網頁的超速警示**（[SPEED_ALERT.md](docs/SPEED_ALERT.md)）：對地速度持續 0.5 秒達到速限（預設 25 km/h）時，數字與外框變紅、響兩聲並震動；降到速限 − 1 km/h 以下 1 秒後解除。速限附近的讀值依賴測速上限的驗收與校正。
+
 ## 精度與限制
 
 | 項目 | 預期 | 依據 |
@@ -70,6 +73,7 @@ CAL 是現地校正得到的係數，吸收寬波束造成的偏差（[ALGORITHM
 | 換到其他乾燥路面 | 再加 ±1～3% | 寬波束的偏差隨路面改變 |
 | 潮濕、光滑路面 | 偏低 10～30%，或量不到 | 24 GHz 在鏡面般的路面回波很弱 |
 | 測速上限 | C4001 規格互相矛盾（徑向 3 或 10 m/s）。若是 3.28 m/s，45° 時約 16.7 km/h 以上靠折疊還原 | **驗收第一項**（[上手文件](docs/GETTING_STARTED.md) §10.1） |
+| 超速警示（25 km/h） | 依賴上一列：C4001 若會截斷，超過約 16.7 km/h 就量不到，無法警示。未校正或潮濕路面讀值偏低，會漏報 | [SPEED_ALERT.md](docs/SPEED_ALERT.md) §2 |
 
 最有效的硬體改進是收窄雷達波束（透鏡或吸波罩），其次是與輪速感測器融合（[ALGORITHM.md](docs/ALGORITHM.md) §11）。
 
@@ -78,9 +82,9 @@ CAL 是現地校正得到的係數，吸收寬波束造成的偏差（[ALGORITHM
 | 項目 | 狀態 |
 | --- | --- |
 | 韌體單元測試與模擬 | 318 項通過（`firmware\arduino.ps1 test`） |
-| 網頁單元測試、lint、型別檢查 | 56 項通過（`npm test`、`npm run lint`、`npm run build`） |
+| 網頁單元測試、lint、型別檢查 | 68 項通過（`npm test`、`npm run lint`、`npm run build`） |
 | 實機（桌上） | 韌體 3.0.0 已燒錄；C4001 接受地面距離窗口（讀回 `getRange：0.620 2.400`），10 Hz 輸出正常 |
-| 實車驗收 | 待進行：[上手文件](docs/GETTING_STARTED.md) §10 的項目 A～G |
+| 實車驗收 | 待進行：[上手文件](docs/GETTING_STARTED.md) §10 的項目 A～H |
 
 ## 專案結構
 
@@ -91,6 +95,7 @@ bsis-radar/
 │  ├─ GETTING_STARTED.md   上手文件：材料 → 接線 → 安裝 → 燒錄 → 校正 → 驗收
 │  ├─ ALGORITHM.md         原理、C4001 規格查證、文獻、估計器設計、模擬結果、誤差預算
 │  ├─ PROTOCOL.md          ESP32 ⇄ 網頁的文字協定與 CSV 格式
+│  ├─ SPEED_ALERT.md       超速警示：速限依據、量測可行性、判斷規則、提示方式
 │  └─ images/              README 截圖
 ├─ firmware/
 │  ├─ SpeedRadar/          ESP32 韌體（Arduino）
@@ -107,5 +112,5 @@ bsis-radar/
 | 元件 | 版本 | 說明 |
 | --- | --- | --- |
 | 韌體 | 3.0.0 | 對地測速。藍牙名稱 `BSIS-Speed`，NVS 命名空間 `speedRadar` |
-| 網頁 | 2.0.0 | 對應韌體 3.x；連上 2.x 韌體時提示更新 |
+| 網頁 | 2.1.0 | 對應韌體 3.x；連上 2.x 韌體時提示更新。2.1 加入超速警示 |
 | 舊版 | 韌體 2.4.0／網頁 1.6.0 | 後方來車偵測，commit `8a5c3b6` |

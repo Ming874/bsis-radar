@@ -9,10 +9,12 @@
 
 | 分頁 | 內容 |
 | --- | --- |
-| 速度 | 對地速度（大字）、量測狀態與訊號品質、不確定度、輪速參考值與差異、本次行程（里程、移動時間、平均、最高）、最近 2 分鐘的速度趨勢 |
+| 速度 | 對地速度（大字）、量測狀態與訊號品質、超速警示（數字與外框變紅）、不確定度、輪速參考值與差異、本次行程（里程、移動時間、平均、最高、超速次數與時間）、最近 2 分鐘的速度趨勢（含速限線） |
 | 校正 | 安裝幾何（俯角、高度、朝向、速度模型，附即時示意圖）、校正係數（已知距離／輪速感測器，多趟依距離加權合併）、精度驗證（雷達 vs 輪速） |
 | 數據 | 即時資料框、距離 × 徑向速度散佈圖（含平坦路面理論曲線與地面窗口）、判斷統計、CSV 記錄、行程紀錄、指令主控台 |
-| 設定 | 顯示（單位、外觀、螢幕常亮、自動重連）、裝置參數（雷達門檻、測速上限、輪周長）、維護、關於 |
+| 設定 | 顯示（單位、外觀、螢幕常亮、自動重連）、超速警示（速限、提示音、震動、測試）、裝置參數（雷達門檻、測速上限、輪周長）、維護、關於 |
+
+超速警示的規則、依據與限制見 [docs/SPEED_ALERT.md](../docs/SPEED_ALERT.md)。
 
 - 手機（< 1024 px）：底部分頁列、單欄。
 - 電腦（≥ 1024 px）：左側選單、雙欄。
@@ -27,11 +29,11 @@ React 19、TypeScript（strict）、Vite、Tailwind CSS 4、Zustand、Vitest、E
 ```text
 src/
 ├─ domain/          領域層：純 TypeScript，不碰瀏覽器 API，全部有單元測試
-│                   協定解析與指令（protocol）、行程統計（trip）、校正與比對（calibration）、
+│                   協定解析與指令（protocol）、行程統計（trip）、校正與比對（calibration）、超速判斷（overspeed）、
 │                   藍牙分段重組（lineAssembler）、單位與格式（units）
 ├─ infrastructure/  基礎設施層：Web Bluetooth（NUS、自動重連、寫入排隊）、示範模式（DemoTransport）、
-│                   localStorage、CSV、螢幕常亮
-├─ application/     應用層：Zustand 狀態（radar、trip、calibration、settings、toast）、
+│                   localStorage、CSV、螢幕常亮、提示音與震動（alertOutput）
+├─ application/     應用層：Zustand 狀態（radar、trip、calibration、settings、overspeed、toast）、
 │                   錯誤訊息繁中化、container.ts（組裝根：唯一知道具體實作的地方）
 └─ ui/
    ├─ kit/          設計系統：Button、Panel、Field／NumberInput／Segmented／Switch／Select、

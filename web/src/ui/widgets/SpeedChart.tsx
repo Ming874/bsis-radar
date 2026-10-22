@@ -1,6 +1,8 @@
 /**
  * 【UI 層】速度趨勢圖：雷達對地速度（實線）與輪速感測器參考值（虛線），最近 2 分鐘。
+ * 開啟超速警示時畫出速限（紅色虛線），速限以上的那一段雷達曲線改成紅色。
  */
+import { useId } from 'react';
 import type { SpeedPoint } from '../../domain/types';
 import { toUnit, type SpeedUnit } from '../../domain/units';
 import { useElementWidth } from '../hooks/useElementWidth';
@@ -31,8 +33,21 @@ function buildPath(points: SpeedPoint[], pick: (p: SpeedPoint) => number | null,
   return d;
 }
 
-export function SpeedChart({ points, unit, windowMs, height = 200 }: { points: SpeedPoint[]; unit: SpeedUnit; windowMs: number; height?: number }) {
+export function SpeedChart({
+  points,
+  unit,
+  windowMs,
+  limitMps = null,
+  height = 200,
+}: {
+  points: SpeedPoint[];
+  unit: SpeedUnit;
+  windowMs: number;
+  limitMps?: number | null;
+  height?: number;
+}) {
   const [ref, width] = useElementWidth<HTMLDivElement>(340);
+  const clipId = `over-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const end = points[points.length - 1]?.t ?? 0; // 右邊界 = 最新一筆的時間
   const start = end - windowMs;
 
@@ -40,6 +55,7 @@ export function SpeedChart({ points, unit, windowMs, height = 200 }: { points: S
   const wheel = (p: SpeedPoint) => (p.wheelMps === null ? null : toUnit(p.wheelMps, unit));
   let max = unit === 'kmh' ? 10 : 3;
   for (const p of points) max = Math.max(max, radar(p) ?? 0, wheel(p) ?? 0);
+  if (limitMps !== null) max = Math.max(max, toUnit(limitMps, unit)); // 速限一直在圖上，看得出離速限多遠
   const step = niceStep(max * 1.1, 4);
   const yMax = Math.ceil((max * 1.1) / step) * step;
 
@@ -53,6 +69,9 @@ export function SpeedChart({ points, unit, windowMs, height = 200 }: { points: S
   const xTicks = [120, 90, 60, 30, 0].filter((s) => s * 1000 <= windowMs);
   const hasWheel = points.some((p) => p.wheelMps !== null);
   const last = [...points].reverse().find((p) => p.speedMps !== null);
+  const radarPath = buildPath(points, radar, x, y);
+  const limitY = limitMps === null ? null : y(toUnit(limitMps, unit));
+  const lastOver = limitMps !== null && last?.speedMps != null && last.speedMps >= limitMps;
 
   return (
     <div ref={ref} className="w-full">
@@ -73,8 +92,19 @@ export function SpeedChart({ points, unit, windowMs, height = 200 }: { points: S
         {hasWheel && (
           <path d={buildPath(points, wheel, x, y)} fill="none" stroke="var(--c-ref)" strokeWidth={1.5} strokeDasharray="4 3" />
         )}
-        <path d={buildPath(points, radar, x, y)} fill="none" stroke="var(--c-accent)" strokeWidth={1.75} strokeLinejoin="round" />
-        {last && last.speedMps !== null && <circle cx={x(last.t)} cy={y(toUnit(last.speedMps, unit))} r={3} fill="var(--c-accent)" />}
+        {limitY !== null && (
+          <>
+            <clipPath id={clipId}>
+              <rect x={0} y={0} width={width} height={limitY} />
+            </clipPath>
+            <line x1={PAD.left} x2={width - PAD.right} y1={limitY} y2={limitY} stroke="var(--c-bad)" strokeWidth={1} strokeDasharray="3 3" />
+          </>
+        )}
+        <path d={radarPath} fill="none" stroke="var(--c-accent)" strokeWidth={1.75} strokeLinejoin="round" />
+        {limitY !== null && <path d={radarPath} fill="none" stroke="var(--c-bad)" strokeWidth={1.75} strokeLinejoin="round" clipPath={`url(#${clipId})`} />}
+        {last && last.speedMps !== null && (
+          <circle cx={x(last.t)} cy={y(toUnit(last.speedMps, unit))} r={3} fill={lastOver ? 'var(--c-bad)' : 'var(--c-accent)'} />
+        )}
       </svg>
       <div className="mt-1 flex gap-4 pl-[34px] text-label text-muted">
         <span className="inline-flex items-center gap-1.5">
@@ -85,6 +115,12 @@ export function SpeedChart({ points, unit, windowMs, height = 200 }: { points: S
           <span className="inline-flex items-center gap-1.5">
             <span aria-hidden className="inline-block w-4 border-t-[1.5px] border-dashed border-ref" />
             輪速（參考）
+          </span>
+        )}
+        {limitMps !== null && (
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="inline-block w-4 border-t border-dashed border-bad" />
+            速限
           </span>
         )}
         <span className="ml-auto pr-2 text-subtle">{unit === 'kmh' ? 'km/h' : 'm/s'}</span>

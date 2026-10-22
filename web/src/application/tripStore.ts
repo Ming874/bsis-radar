@@ -9,10 +9,12 @@ import type { Telemetry } from '../domain/types';
 export const MIN_SAVED_TRIP_M = 50;
 const MAX_TRIPS = 50;
 
-export interface SavedTrip extends TripSnapshot {
-  id: string;
-  endedAt: number;
-}
+/** 網頁 2.1 以前存的行程沒有超速欄位 */
+export type SavedTrip = Omit<TripSnapshot, 'overspeedS' | 'overspeedCount'> &
+  Partial<Pick<TripSnapshot, 'overspeedS' | 'overspeedCount'>> & {
+    id: string;
+    endedAt: number;
+  };
 
 export interface TripState {
   current: TripSnapshot;
@@ -20,7 +22,8 @@ export interface TripState {
 }
 
 export interface TripActions {
-  onTelemetry: (t: Telemetry) => void;
+  /** @param overspeed 這一筆是否處於超速（由超速警示判斷） */
+  onTelemetry: (t: Telemetry, overspeed?: boolean) => void;
   /** 結束本次行程：夠長就存進紀錄，然後從 0 開始 */
   finish: () => void;
   deleteTrip: (id: string) => void;
@@ -43,8 +46,8 @@ export function createTripStore(deps: TripStoreDeps) {
     current: meter.snapshot(),
     trips: deps.loadTrips(),
 
-    onTelemetry: (t) => {
-      meter.update(t);
+    onTelemetry: (t, overspeed = false) => {
+      meter.update(t, overspeed);
       // 畫面每 0.25 秒更新一次就夠了（遙測是 10 Hz）
       if (t.receivedAt - lastPublish >= 250) {
         lastPublish = t.receivedAt;

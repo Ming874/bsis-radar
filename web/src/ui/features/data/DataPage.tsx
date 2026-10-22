@@ -154,6 +154,7 @@ function TripsPanel() {
                 <th className="px-2 py-2 text-right font-medium">移動時間</th>
                 <th className="px-2 py-2 text-right font-medium">平均</th>
                 <th className="px-2 py-2 text-right font-medium">最高</th>
+                <th className="px-2 py-2 text-right font-medium">超速</th>
                 <th className="w-10" />
               </tr>
             </thead>
@@ -169,6 +170,9 @@ function TripsPanel() {
                     <td className="px-2 py-2 text-right text-fg">{formatDuration(t.movingS)}</td>
                     <td className="px-2 py-2 text-right text-fg">{formatSpeed(averageMps(t), unit)}</td>
                     <td className="px-2 py-2 text-right text-fg">{formatSpeed(t.maxMps, unit)}</td>
+                    <td className={`px-2 py-2 text-right ${t.overspeedCount ? 'text-fg' : 'text-subtle'}`}>
+                      {t.overspeedS === undefined ? DASH : t.overspeedCount ? `${t.overspeedCount}× ${formatDuration(t.overspeedS)}` : '0'}
+                    </td>
                     <td className="py-1 pr-2 text-right">
                       <IconButton icon={TrashIcon} label="刪除這筆行程" onClick={() => tripStore.getState().deleteTrip(t.id)} />
                     </td>
@@ -177,7 +181,7 @@ function TripsPanel() {
               })}
             </tbody>
           </table>
-          <p className="px-4 py-2 text-label text-subtle">速度單位：{speedUnitLabel(unit)}</p>
+          <p className="px-4 py-2 text-label text-subtle">速度單位：{speedUnitLabel(unit)}。超速：次數 × 累計時間（以當時的速限判斷；2.1 版以前的紀錄沒有這一欄）</p>
         </div>
       )}
       {confirm && (

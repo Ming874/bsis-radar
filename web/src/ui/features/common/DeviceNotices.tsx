@@ -2,9 +2,10 @@
  * 【UI 層】裝置提示：只在需要使用者處理時出現（韌體過舊、雷達離線、朝向可能設反、超過測速上限…）。
  */
 import { useShallow } from 'zustand/react/shallow';
-import { radarStore, useRadar } from '../../../application/container';
+import { radarStore, useRadar, useSettings } from '../../../application/container';
 import { WRONG_DIRECTION_HINT_PCT, firmwareMismatch } from '../../../application/selectors';
-import { FIRMWARE_MAJOR } from '../../../domain/protocol';
+import { FIRMWARE_MAJOR, unambiguousGroundMps } from '../../../domain/protocol';
+import { kmhToMps } from '../../../domain/units';
 import { Button, Notice } from '../../kit';
 
 export function DeviceNotices() {
@@ -18,8 +19,10 @@ export function DeviceNotices() {
       radarOnline: r.telemetry?.radarOnline ?? null,
       state: r.telemetry?.state ?? null,
       wrongDirPct: r.telemetry?.wrongDirPct ?? 0,
+      unambiguousMps: r.config ? unambiguousGroundMps(r.config.radialLimitMps, r.config.angleDeg, r.config.calibration) : null,
     })),
   );
+  const limit = useSettings(useShallow((x) => ({ on: x.speedAlert, kmh: x.speedLimitKmh })));
   if (!s.connected) return null;
 
   const notices = [];
@@ -53,6 +56,10 @@ export function DeviceNotices() {
     notices.push(
       <Notice key="over" tone="bad" title="超出雷達測速上限">
         徑向速度接近 VMAX，雷達讀值不可靠。降低車速後會自動恢復；若在一般車速就出現，請到「數據」頁確認 C4001 的實際上限並調整 VMAX。
+        {limit.on &&
+          (s.unambiguousMps !== null && s.unambiguousMps >= kmhToMps(limit.kmh)
+            ? ` 雷達的上限高於速限 ${limit.kmh} km/h，這時一定已經超速。`
+            : ` 這時無法判斷是否超過速限 ${limit.kmh} km/h。`)}
       </Notice>,
     );
   }

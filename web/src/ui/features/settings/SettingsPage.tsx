@@ -1,12 +1,15 @@
 /**
- * 【設定】顯示偏好（存在手機）、裝置參數（存在 ESP32）、維護、關於。
+ * 【設定】顯示偏好與超速警示（存在手機）、裝置參數（存在 ESP32）、維護、關於。
  */
 import { useState } from 'react';
-import { capabilities, radarStore, settingsStore, useRadar, useSettings } from '../../../application/container';
+import { useShallow } from 'zustand/react/shallow';
+import { actions, capabilities, radarStore, settingsStore, useRadar, useSettings } from '../../../application/container';
+import { ALERT_COOLDOWN_MS } from '../../../application/overspeedStore';
 import type { ThemeSetting } from '../../../application/settingsStore';
+import { OVERSPEED_ENTER_MS, OVERSPEED_EXIT_MS, OVERSPEED_HYSTERESIS_MPS, SPEED_LIMIT_KMH } from '../../../domain/overspeed';
 import { LIMITS, diffConfig, unambiguousGroundMps } from '../../../domain/protocol';
 import type { EditableConfig } from '../../../domain/types';
-import type { SpeedUnit } from '../../../domain/units';
+import { formatLimit, mpsToKmh, type SpeedUnit } from '../../../domain/units';
 import {
   Button,
   ConfirmDialog,
@@ -14,6 +17,7 @@ import {
   Field,
   FieldGroup,
   KeyValue,
+  Notice,
   NumberInput,
   PageHeader,
   Panel,
@@ -76,6 +80,76 @@ function DisplayPanel() {
           <Switch label="斷線自動重新連線" checked={s.autoReconnect} onChange={(autoReconnect) => update({ autoReconnect })} />
         </Field>
       </FieldGroup>
+    </Panel>
+  );
+}
+
+/** 超速警示：速限與提示方式；可靠度受校正與雷達測速上限影響，有問題時在面板下方提示 */
+function AlertPanel() {
+  const s = useSettings(
+    useShallow((x) => ({ on: x.speedAlert, kmh: x.speedLimitKmh, sound: x.alertSound, vibrate: x.alertVibrate, unit: x.speedUnit })),
+  );
+  const config = useRadar((r) => r.config);
+  const update = settingsStore.getState().update;
+  const unambiguousKmh = config ? mpsToKmh(unambiguousGroundMps(config.radialLimitMps, config.angleDeg, config.calibration)) : null;
+  const uncalibrated = config !== null && config.calibration === 1;
+  const folding = unambiguousKmh !== null && unambiguousKmh < s.kmh;
+  const hysteresisKmh = mpsToKmh(OVERSPEED_HYSTERESIS_MPS);
+
+  return (
+    <Panel title="超速警示" description="存在這支手機的瀏覽器裡" flush>
+      <FieldGroup>
+        <Field
+          label="超速警示"
+          description={`雷達對地速度持續 ${OVERSPEED_ENTER_MS / 1000} 秒達到速限時，數字與外框變紅並提示；降到速限 − ${hysteresisKmh.toFixed(0)} km/h 以下 ${OVERSPEED_EXIT_MS / 1000} 秒後解除`}
+        >
+          <Switch label="超速警示" checked={s.on} onChange={(speedAlert) => update({ speedAlert })} />
+        </Field>
+        <Field
+          label="速限"
+          description={`預設 25 km/h：台灣電動輔助自行車與微型電動二輪車的最大行駛速率（道路交通管理處罰條例第 69 條）${s.unit === 'mps' ? `。目前 ${formatLimit(s.kmh, 'mps')} m/s` : ''}`}
+        >
+          <NumberInput
+            label="速限"
+            value={s.kmh}
+            onChange={(v) => {
+              const kmh = Math.round(v);
+              if (kmh >= SPEED_LIMIT_KMH.min && kmh <= SPEED_LIMIT_KMH.max) update({ speedLimitKmh: kmh });
+            }}
+            min={SPEED_LIMIT_KMH.min}
+            max={SPEED_LIMIT_KMH.max}
+            step={1}
+            decimals={0}
+            unit="km/h"
+            width="w-10"
+          />
+        </Field>
+        <Field label="提示音" description={capabilities.alertSound ? `進入超速時響兩聲；在速限附近反覆進出時最多每 ${ALERT_COOLDOWN_MS / 1000} 秒一次` : '這個瀏覽器不支援'}>
+          <Switch label="提示音" checked={s.sound} disabled={!s.on || !capabilities.alertSound} onChange={(alertSound) => update({ alertSound })} />
+        </Field>
+        <Field label="震動" description={capabilities.vibrate ? '手機裝在龍頭上時不一定感覺得到' : '這個瀏覽器不支援（iPhone 沒有震動功能可用）'}>
+          <Switch label="震動" checked={s.vibrate} disabled={!s.on || !capabilities.vibrate} onChange={(alertVibrate) => update({ alertVibrate })} />
+        </Field>
+        <Field label="測試提示" description="手機靜音或媒體音量為 0 時不會響；出發前先確認聽得到">
+          <Button size="sm" disabled={!s.on || (!s.sound && !s.vibrate)} onClick={() => void actions.previewAlert()}>
+            測試
+          </Button>
+        </Field>
+      </FieldGroup>
+      {s.on && (uncalibrated || folding) && (
+        <div className="flex flex-col gap-3 border-t border-line p-4">
+          {uncalibrated && (
+            <Notice tone="warn" title="尚未校正，實際超速時可能不會警示">
+              CAL = 1.0000 時讀值通常偏低 10～20%（實際 {s.kmh} km/h 約顯示 {(s.kmh * 0.8).toFixed(0)}～{(s.kmh * 0.9).toFixed(0)} km/h）。請先到「校正」頁完成距離校正。
+            </Notice>
+          )}
+          {folding && unambiguousKmh !== null && (
+            <Notice tone="info" title={`速限高於雷達不折疊的最高速度 ${unambiguousKmh.toFixed(1)} km/h`}>
+              速限附近的讀值要靠韌體還原折疊，需要回波連續。若驗收發現 C4001 會截斷（上手文件 §10.1），超過 {unambiguousKmh.toFixed(1)} km/h 就會顯示「超出測速上限」，這時無法判斷是否超速。
+            </Notice>
+          )}
+        </div>
+      )}
     </Panel>
   );
 }
@@ -234,9 +308,10 @@ export function SettingsPage() {
       <div className="grid items-start gap-4 lg:grid-cols-2">
         <div className="grid gap-4">
           <DisplayPanel />
-          <DevicePanel />
+          <AlertPanel />
         </div>
         <div className="grid gap-4">
+          <DevicePanel />
           <MaintenancePanel />
           <AboutPanel />
         </div>

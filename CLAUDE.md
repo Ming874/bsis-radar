@@ -16,6 +16,7 @@
   - UI 用統一設計系統 `web/src/ui/kit`（設計基準在 `web/src/index.css`：中性灰階、單一重點色、1 px 邊框、小圓角，不用漸層與陰影），頁面在 `ui/features`，外框在 `ui/shell`
   - 手機版：底部分頁列；電腦版（≥ 1024 px）：左側選單 + 雙欄；分頁同步到網址 `#/speed` 等
   - 示範模式 `?demo`（`infrastructure/transport/DemoTransport.ts`）：不需要硬體，也用來產生 `docs/images` 的截圖
+  - 超速警示（預設 25 km/h，只在網頁端）：規則在 `domain/overspeed.ts`（遲滯 1 km/h、進入 0.5 秒、解除 1 秒），依據與限制在 `docs/SPEED_ALERT.md`
 - `docs/proposal/`（計畫書 PDF，含組員學號）不進 git
 
 ## Zeabur Deployment

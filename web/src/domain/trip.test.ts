@@ -66,6 +66,18 @@ describe('TripMeter', () => {
     expect(noWheel.snapshot().wheelDistanceM).toBeNull();
   });
 
+  it('超速時間與次數：依傳入的超速狀態累計，藍牙中斷的空檔不算', () => {
+    const trip = new TripMeter(0);
+    const over = (k: number) => (k >= 10 && k < 30) || (k >= 50 && k < 60);
+    for (let k = 0; k < 80; k++) trip.update(tele(k * 100, { radarDistanceM: k * 0.5 }), over(k));
+    expect(trip.snapshot().overspeedCount).toBe(2);
+    expect(trip.snapshot().overspeedS).toBeCloseTo(1.9 + 0.9, 6);
+    trip.update(tele(20_000, {}), true);
+    trip.update(tele(30_000, {}), true); // 中斷 10 秒
+    expect(trip.snapshot().overspeedCount).toBe(3);
+    expect(trip.snapshot().overspeedS).toBeCloseTo(2.8, 6);
+  });
+
   it('重設：從下一筆開始重新累加', () => {
     const trip = new TripMeter(0);
     trip.update(tele(0, { radarDistanceM: 0 }));

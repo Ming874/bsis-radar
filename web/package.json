@@ -1,7 +1,7 @@
 {
   "name": "bsis-speed-web",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "BSIS 對地測速：C4001 毫米波雷達的網頁儀表板（Web Bluetooth）",
   "type": "module",
   "engines": {

@@ -9,6 +9,7 @@ export function Panel({
   actions,
   footer,
   flush = false,
+  alert = false,
   className = '',
   bodyClassName = '',
   children,
@@ -19,13 +20,15 @@ export function Panel({
   footer?: ReactNode;
   /** 內容不留邊距（表格、圖表貼齊邊框） */
   flush?: boolean;
+  /** 警示中：外框改成狀態紅（例如超速） */
+  alert?: boolean;
   className?: string;
   bodyClassName?: string;
   children?: ReactNode;
 }) {
   const id = useId();
   return (
-    <section aria-labelledby={title ? id : undefined} className={`flex min-w-0 flex-col rounded-lg border border-line bg-panel ${className}`}>
+    <section aria-labelledby={title ? id : undefined} className={`flex min-w-0 flex-col rounded-lg border bg-panel ${alert ? 'border-bad' : 'border-line'} ${className}`}>
       {(title || actions) && (
         <header className="flex min-h-11 items-center justify-between gap-3 border-b border-line px-4 py-2">
           <div className="min-w-0">

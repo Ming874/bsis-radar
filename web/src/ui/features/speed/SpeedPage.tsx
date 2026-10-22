@@ -1,15 +1,15 @@
 /**
- * 【速度】主畫面：對地速度（大字）、量測狀態、本次行程、速度趨勢圖。
- * 騎車時手機裝在龍頭上：最重要的數字最大、其他資訊安靜地放在下面。
+ * 【速度】主畫面：對地速度（大字）、量測狀態、超速警示、本次行程、速度趨勢圖。
+ * 騎車時手機裝在龍頭上：最重要的數字最大、其他資訊安靜地放在下面。超速時數字與外框變紅。
  */
 import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { actions, useRadar, useSettings, useTrip } from '../../../application/container';
+import { actions, useOverspeed, useRadar, useSettings, useTrip } from '../../../application/container';
 import { SPEED_WINDOW_MS } from '../../../application/radarStore';
 import { STEADY_ACCEL, describeState, recentAccel } from '../../../application/selectors';
 import { unambiguousGroundMps } from '../../../domain/protocol';
 import { averageMps } from '../../../domain/trip';
-import { DASH, formatDistance, formatDuration, formatPercent, formatSpeed, speedUnitLabel } from '../../../domain/units';
+import { DASH, formatDistance, formatDuration, formatLimit, formatPercent, formatSpeed, kmhToMps, speedUnitLabel } from '../../../domain/units';
 import { ConfirmDialog, KeyValue, PageHeader, Panel, Stat, StatusLabel, TONE_TEXT } from '../../kit';
 import { SpeedChart } from '../../widgets/SpeedChart';
 import { ConnectPanel } from '../common/ConnectPanel';
@@ -32,6 +32,8 @@ function QualityBars({ pct }: { pct: number }) {
 
 function SpeedReadout() {
   const unit = useSettings((s) => s.speedUnit);
+  const limit = useSettings(useShallow((s) => ({ on: s.speedAlert, kmh: s.speedLimitKmh })));
+  const over = useOverspeed((o) => o.active);
   const t = useRadar(
     useShallow((r) => ({
       connected: r.connection.status === 'connected' && !r.stale && r.telemetry !== null,
@@ -51,22 +53,28 @@ function SpeedReadout() {
   const diffPct = comparable && steady && t.wheel !== null && speed !== null ? ((speed - t.wheel) / t.wheel) * 100 : null;
 
   return (
-    <Panel className="lg:row-span-2" bodyClassName="flex flex-col">
+    <Panel alert={over} className="lg:row-span-2" bodyClassName="flex flex-col">
       <div className="flex items-center justify-between gap-3">
         {t.connected ? <StatusLabel tone={view.tone}>{view.label}</StatusLabel> : <StatusLabel tone="idle">未連線</StatusLabel>}
         {t.connected && (t.state === 'tracking' || t.state === 'holding') && <QualityBars pct={t.quality} />}
       </div>
 
-      <div className="flex flex-1 items-center justify-center py-8 lg:py-10">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 lg:py-10">
         <div className="flex items-baseline gap-3">
           <span
             aria-live="off"
-            className={`tabular text-[clamp(5.5rem,26vw,10rem)] leading-none font-semibold tracking-tighter ${speed === null ? 'text-subtle' : dim ? 'text-muted' : 'text-fg'}`}
+            className={`tabular text-[clamp(5.5rem,26vw,10rem)] leading-none font-semibold tracking-tighter ${speed === null ? 'text-subtle' : over ? 'text-bad' : dim ? 'text-muted' : 'text-fg'}`}
           >
             {formatSpeed(speed, unit)}
           </span>
-          <span className="text-value font-medium text-muted">{speedUnitLabel(unit)}</span>
+          <span className={`text-value font-medium ${over ? 'text-bad' : 'text-muted'}`}>{speedUnitLabel(unit)}</span>
         </div>
+        {limit.on && (
+          // 固定高度：超速與否切換時版面不跳動
+          <p aria-live="polite" className={`tabular h-5 leading-5 ${over ? 'text-value font-semibold text-bad' : 'text-label text-subtle'}`}>
+            {over ? '超過速限' : '速限'} {formatLimit(limit.kmh, unit)} {speedUnitLabel(unit)}
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-3 border-t border-line pt-4">
@@ -81,6 +89,7 @@ function SpeedReadout() {
 
 function TripPanel() {
   const unit = useSettings((s) => s.speedUnit);
+  const alertOn = useSettings((s) => s.speedAlert);
   const trip = useTrip((s) => s.current);
   const [confirm, setConfirm] = useState(false);
   const distance = formatDistance(trip.distanceM);
@@ -98,7 +107,13 @@ function TripPanel() {
         <Stat label="里程" value={distance.value} unit={distance.unit} />
         <Stat label="移動時間" value={formatDuration(trip.movingS)} />
         <Stat label="平均速度" value={formatSpeed(avg, unit)} unit={avg === null ? undefined : speedUnitLabel(unit)} muted={avg === null} />
-        <Stat label="最高速度" value={trip.maxMps > 0 ? formatSpeed(trip.maxMps, unit) : DASH} unit={trip.maxMps > 0 ? speedUnitLabel(unit) : undefined} muted={trip.maxMps === 0} />
+        <Stat
+          label="最高速度"
+          value={trip.maxMps > 0 ? formatSpeed(trip.maxMps, unit) : DASH}
+          unit={trip.maxMps > 0 ? speedUnitLabel(unit) : undefined}
+          muted={trip.maxMps === 0}
+          sub={alertOn ? (trip.overspeedCount === 0 ? '未超過速限' : `超速 ${trip.overspeedCount} 次，共 ${formatDuration(trip.overspeedS)}`) : undefined}
+        />
       </div>
       {confirm && (
         <ConfirmDialog
@@ -115,10 +130,11 @@ function TripPanel() {
 
 function ChartPanel() {
   const unit = useSettings((s) => s.speedUnit);
+  const limitMps = useSettings((s) => (s.speedAlert ? kmhToMps(s.speedLimitKmh) : null));
   const points = useRadar((r) => r.speedHistory);
   return (
     <Panel title="速度趨勢" description="最近 2 分鐘">
-      <SpeedChart points={points} unit={unit} windowMs={SPEED_WINDOW_MS} />
+      <SpeedChart points={points} unit={unit} windowMs={SPEED_WINDOW_MS} limitMps={limitMps} />
     </Panel>
   );
 }

@@ -3,6 +3,7 @@
  *
  * 里程用韌體的雷達里程（DR）差值累加：韌體以 10 Hz 積分，藍牙斷線期間也照算，
  * 比網頁自己用 5～10 Hz 的速度積分準確。韌體重新開機（開機秒數或 DR 變小）時重新對齊，不會出現負的距離。
+ * 超速時間與次數依呼叫端傳入的超速狀態累計（判斷見 overspeed.ts）。
  */
 import type { Telemetry } from './types';
 
@@ -17,6 +18,8 @@ export interface TripSnapshot {
   movingS: number;
   maxMps: number;
   wheelDistanceM: number | null;
+  overspeedS: number; // 超過速限的累計時間
+  overspeedCount: number; // 進入超速的次數
 }
 
 export class TripMeter {
@@ -25,6 +28,9 @@ export class TripMeter {
   private movingS = 0;
   private maxMps = 0;
   private wheelDistanceM: number | null = null;
+  private overspeedS = 0;
+  private overspeedCount = 0;
+  private lastOverspeed = false;
   private lastDr: number | null = null;
   private lastDw: number | null = null;
   private lastUptime = -1;
@@ -40,11 +46,14 @@ export class TripMeter {
     this.movingS = 0;
     this.maxMps = 0;
     this.wheelDistanceM = null;
+    this.overspeedS = 0;
+    this.overspeedCount = 0;
+    this.lastOverspeed = false; // 重設時正在超速：算進新行程的第一次
     // 基準值保留：重設後從下一筆的差值開始累加
     this.lastAt = null;
   }
 
-  update(t: Telemetry): void {
+  update(t: Telemetry, overspeed = false): void {
     const restarted = t.uptimeS < this.lastUptime;
     if (this.lastDr !== null && !restarted && t.radarDistanceM >= this.lastDr) {
       this.distanceM += t.radarDistanceM - this.lastDr;
@@ -65,7 +74,10 @@ export class TripMeter {
     if (this.lastAt !== null) {
       const dt = (t.receivedAt - this.lastAt) / 1000;
       if (dt > 0 && dt <= MAX_GAP_S && speed >= MOVING_MPS) this.movingS += dt;
+      if (dt > 0 && dt <= MAX_GAP_S && overspeed && this.lastOverspeed) this.overspeedS += dt;
     }
+    if (overspeed && !this.lastOverspeed) this.overspeedCount++;
+    this.lastOverspeed = overspeed;
     this.lastAt = t.receivedAt;
     if (t.state === 'tracking' && speed > this.maxMps) this.maxMps = speed;
   }
@@ -77,6 +89,8 @@ export class TripMeter {
       movingS: this.movingS,
       maxMps: this.maxMps,
       wheelDistanceM: this.wheelDistanceM,
+      overspeedS: this.overspeedS,
+      overspeedCount: this.overspeedCount,
     };
   }
 }
