@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileStamp, formatClock, formatDistance, formatDuration, formatPercent, formatSpeed, mpsToKmh, toUnit } from './units';
+import { fileStamp, formatClock, formatDayLabel, formatDistance, formatDuration, formatDurationWords, formatHm, formatPercent, formatSpeed, mpsToKmh, toUnit } from './units';
 
 describe('units', () => {
   it('速度：km/h 一位小數、m/s 兩位小數', () => {
@@ -32,5 +32,17 @@ describe('units', () => {
     const t = new Date(2026, 9, 21, 14, 3, 7).getTime();
     expect(formatClock(t)).toBe('14:03:07');
     expect(fileStamp(t)).toBe('20261021_140307');
+  });
+
+  it('行程的日期與時間', () => {
+    const now = new Date(2026, 9, 24, 20, 0).getTime();
+    expect(formatDayLabel(new Date(2026, 9, 24, 7, 30).getTime(), now)).toBe('今天');
+    expect(formatDayLabel(new Date(2026, 9, 23, 23, 59).getTime(), now)).toBe('昨天');
+    expect(formatDayLabel(new Date(2026, 9, 22, 8, 0).getTime(), now)).toBe('10/22（四）');
+    expect(formatDayLabel(new Date(2025, 11, 31, 8, 0).getTime(), now)).toBe('2025/12/31（三）');
+    expect(formatHm(new Date(2026, 9, 24, 7, 5).getTime())).toBe('07:05');
+    expect(formatDurationWords(45)).toBe('45 秒');
+    expect(formatDurationWords(12 * 60 + 10)).toBe('12 分');
+    expect(formatDurationWords(3900)).toBe('1 小時 5 分');
   });
 });

@@ -39,31 +39,31 @@ export function MountDiagram({ angleDeg, heightM, direction }: { angleDeg: numbe
   return (
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`安裝示意：高度 ${hM.toFixed(2)} m、俯角 ${a.toFixed(0)}°`} className="h-auto w-full">
       {/* 地面 */}
-      <line x1={8} x2={W - 8} y1={GROUND} y2={GROUND} stroke="var(--c-line-strong)" strokeWidth={1.5} />
+      <line x1={8} x2={W - 8} y1={GROUND} y2={GROUND} stroke="var(--line-strong)" strokeWidth={1.5} />
       {/* 車輪（示意）：讓朝向一目了然 */}
-      <circle cx={rx - sign * (wheelR + 12)} cy={GROUND - wheelR} r={wheelR} fill="none" stroke="var(--c-line-strong)" strokeWidth={1.5} />
+      <circle cx={rx - sign * (wheelR + 12)} cy={GROUND - wheelR} r={wheelR} fill="none" stroke="var(--line-strong)" strokeWidth={1.5} />
       {/* 波束（地面窗口） */}
-      <polygon points={`${rx},${ry} ${gx(near)},${GROUND} ${gx(far)},${GROUND}`} fill="var(--c-accent)" fillOpacity={0.12} stroke="var(--c-accent)" strokeOpacity={0.35} />
-      <line x1={rx} y1={ry} x2={gx(center)} y2={GROUND} stroke="var(--c-accent)" strokeWidth={1.5} strokeDasharray="5 4" />
+      <polygon points={`${rx},${ry} ${gx(near)},${GROUND} ${gx(far)},${GROUND}`} fill="var(--tint)" fillOpacity={0.12} stroke="var(--tint)" strokeOpacity={0.35} />
+      <line x1={rx} y1={ry} x2={gx(center)} y2={GROUND} stroke="var(--tint)" strokeWidth={1.5} strokeDasharray="5 4" />
       {/* 雷達本體 */}
-      <rect x={rx - 7} y={ry - 7} width={14} height={14} rx={2} fill="var(--c-panel)" stroke="var(--c-fg)" strokeWidth={1.5} />
+      <rect x={rx - 7} y={ry - 7} width={14} height={14} rx={2} fill="var(--surface)" stroke="var(--ink)" strokeWidth={1.5} />
       {/* 水平參考線與俯角弧 */}
-      <line x1={rx} y1={ry} x2={rx + sign * (arcR + 14)} y2={ry} stroke="var(--c-subtle)" strokeDasharray="2 3" />
-      <path d={`M${ax},${ry} A${arcR},${arcR} 0 0 ${sweep} ${bx},${by}`} fill="none" stroke="var(--c-fg)" />
-      <text x={rx + sign * (arcR + 18)} y={ry + 16} textAnchor={direction === 1 ? 'end' : 'start'} fontSize={12} fill="var(--c-fg)">
+      <line x1={rx} y1={ry} x2={rx + sign * (arcR + 14)} y2={ry} stroke="var(--faint)" strokeDasharray="2 3" />
+      <path d={`M${ax},${ry} A${arcR},${arcR} 0 0 ${sweep} ${bx},${by}`} fill="none" stroke="var(--ink)" />
+      <text x={rx + sign * (arcR + 18)} y={ry + 16} textAnchor={direction === 1 ? 'end' : 'start'} fontSize={12} fill="var(--ink)">
         θ = {a.toFixed(1)}°
       </text>
       {/* 高度：雷達正下方的鉛直線，標註放在波束這一側 */}
-      <line x1={rx} y1={ry + 8} x2={rx} y2={GROUND} stroke="var(--c-subtle)" strokeDasharray="2 3" />
-      <text x={rx + sign * 8} y={ry + (GROUND - ry) * 0.62} textAnchor={direction === 1 ? 'end' : 'start'} fontSize={12} fill="var(--c-fg)">
+      <line x1={rx} y1={ry + 8} x2={rx} y2={GROUND} stroke="var(--faint)" strokeDasharray="2 3" />
+      <text x={rx + sign * 8} y={ry + (GROUND - ry) * 0.62} textAnchor={direction === 1 ? 'end' : 'start'} fontSize={12} fill="var(--ink)">
         h = {hM.toFixed(2)} m
       </text>
       {/* 地面窗口標註 */}
-      <text x={(gx(near) + gx(far)) / 2} y={GROUND + 16} textAnchor="middle" fontSize={11} fill="var(--c-muted)">
+      <text x={(gx(near) + gx(far)) / 2} y={GROUND + 16} textAnchor="middle" fontSize={11} fill="var(--muted)">
         斜距 {w.minM.toFixed(2)}～{w.maxM.toFixed(2)} m · 視軸 {w.boresightM.toFixed(2)} m
       </text>
       {/* 前進方向 */}
-      <g fill="var(--c-subtle)" fontSize={11}>
+      <g fill="var(--faint)" fontSize={11}>
         <text x={W - 10} y={18} textAnchor="end">
           前進 →
         </text>

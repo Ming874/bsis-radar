@@ -2,8 +2,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { startServices } from './application/container';
 import './index.css';
+import { startPwa } from './infrastructure/pwa/pwa';
 import { App } from './ui/App';
 
+// 先收起安裝事件（可能在畫面出來之前就到）、註冊 Service Worker
+startPwa();
 startServices();
 
 const root = document.getElementById('root');
@@ -14,10 +17,3 @@ createRoot(root).render(
     <App />
   </StrictMode>,
 );
-
-// 正式版才註冊 Service Worker（離線也能開啟、可加入主畫面）
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
-  });
-}

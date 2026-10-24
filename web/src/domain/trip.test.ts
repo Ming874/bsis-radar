@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TripMeter, averageMps } from './trip';
+import { TripMeter, averageMps, isSavedTrip, summarizeTrips } from './trip';
 import type { Telemetry } from './types';
 
 function tele(at: number, patch: Partial<Telemetry>): Telemetry {
@@ -87,5 +87,43 @@ describe('TripMeter', () => {
     expect(trip.snapshot().distanceM).toBe(5);
     expect(trip.snapshot().startedAt).toBe(200);
     expect(averageMps(trip.snapshot())).toBeNull();
+  });
+
+  it('存檔後接續：ESP32 沒重開機時，中間騎的距離也算進去；重開機就重新對齊', () => {
+    const trip = new TripMeter(0);
+    trip.update(tele(0, { radarDistanceM: 100, uptimeS: 50 }));
+    trip.update(tele(100, { radarDistanceM: 110, uptimeS: 50 }));
+    const saved = trip.save();
+
+    const resumed = new TripMeter(999);
+    resumed.restore(saved);
+    resumed.update(tele(60_000, { radarDistanceM: 150, uptimeS: 110 }));
+    expect(resumed.snapshot().distanceM).toBe(50);
+    expect(resumed.snapshot().startedAt).toBe(0);
+
+    const rebooted = new TripMeter(999);
+    rebooted.restore(saved);
+    rebooted.update(tele(60_000, { radarDistanceM: 3, uptimeS: 5 }));
+    rebooted.update(tele(60_100, { radarDistanceM: 4, uptimeS: 5 }));
+    expect(rebooted.snapshot().distanceM).toBe(11);
+  });
+});
+
+describe('行程紀錄', () => {
+  it('累計：總里程、總移動時間、平均、最高、最長', () => {
+    const totals = summarizeTrips([
+      { distanceM: 3000, movingS: 600, maxMps: 8 },
+      { distanceM: 1000, movingS: 400, maxMps: 9 },
+    ]);
+    expect(totals).toEqual({ count: 2, distanceM: 4000, movingS: 1000, maxMps: 9, longestM: 3000, avgMps: 4 });
+    expect(summarizeTrips([]).avgMps).toBeNull();
+  });
+
+  it('讀回來的行程要檢查格式（舊版沒有的欄位可以缺）', () => {
+    const ok = { id: '1', startedAt: 1, endedAt: 2, distanceM: 100, movingS: 20, maxMps: 5, wheelDistanceM: null };
+    expect(isSavedTrip(ok)).toBe(true);
+    expect(isSavedTrip({ ...ok, trace: { stepS: 1, v: [1] }, limitKmh: null, overspeedS: 0, overspeedCount: 0 })).toBe(true);
+    expect(isSavedTrip({ ...ok, distanceM: -1 })).toBe(false);
+    expect(isSavedTrip({ ...ok, trace: { stepS: 1, v: 'x' } })).toBe(false);
   });
 });

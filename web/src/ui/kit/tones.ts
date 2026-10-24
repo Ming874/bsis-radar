@@ -7,16 +7,16 @@ export const TONE_TEXT: Record<Tone, string> = {
   ok: 'text-ok',
   warn: 'text-warn',
   bad: 'text-bad',
-  idle: 'text-subtle',
-  busy: 'text-accent',
+  idle: 'text-faint',
+  busy: 'text-tint',
 };
 
 export const TONE_BG: Record<Tone, string> = {
   ok: 'bg-ok',
   warn: 'bg-warn',
   bad: 'bg-bad',
-  idle: 'bg-subtle',
-  busy: 'bg-accent',
+  idle: 'bg-faint',
+  busy: 'bg-tint',
 };
 
 /** 數值是有限數而且在範圍內 */

@@ -14,13 +14,13 @@ function color(v: FrameVerdict): string {
     case 'accepted':
     case 'unfolded':
     case 'acquiring':
-      return 'var(--c-accent)';
+      return 'var(--tint)';
     case 'outlier':
     case 'wrongDirection':
     case 'atLimit':
-      return 'var(--c-warn)';
+      return 'var(--warn)';
     default:
-      return 'var(--c-subtle)';
+      return 'var(--faint)';
   }
 }
 
@@ -75,35 +75,35 @@ export function ScatterPlot({
     <div ref={ref} className="w-full">
       <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="雷達資料框的距離與徑向速度分布" className="block h-auto">
         {config && config.gateMaxM > config.gateMinM && (
-          <rect x={x(config.gateMinM)} y={PAD.top} width={x(config.gateMaxM) - x(config.gateMinM)} height={innerH} fill="var(--c-sunken)" />
+          <rect x={x(config.gateMinM)} y={PAD.top} width={x(config.gateMaxM) - x(config.gateMinM)} height={innerH} fill="var(--surface-2)" />
         )}
         {yTicks.map((v) => (
           <g key={v}>
-            <line x1={PAD.left} x2={width - PAD.right} y1={y(v)} y2={y(v)} stroke={v === 0 ? 'var(--c-line-strong)' : 'var(--c-line)'} />
-            <text x={PAD.left - 6} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--c-subtle)" className="tabular">
+            <line x1={PAD.left} x2={width - PAD.right} y1={y(v)} y2={y(v)} stroke={v === 0 ? 'var(--line-strong)' : 'var(--line)'} />
+            <text x={PAD.left - 6} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--faint)" className="num">
               {v}
             </text>
           </g>
         ))}
         {xTicks.map((r) => (
-          <text key={r} x={x(r)} y={height - 14} textAnchor="middle" fontSize={11} fill="var(--c-subtle)" className="tabular">
+          <text key={r} x={x(r)} y={height - 14} textAnchor="middle" fontSize={11} fill="var(--faint)" className="num">
             {r}
           </text>
         ))}
-        <text x={width - PAD.right} y={height - 1} textAnchor="end" fontSize={11} fill="var(--c-subtle)">
+        <text x={width - PAD.right} y={height - 1} textAnchor="end" fontSize={11} fill="var(--faint)">
           距離（m）
         </text>
         {config && config.radialLimitMps < yMax && (
-          <line x1={PAD.left} x2={width - PAD.right} y1={y(config.radialLimitMps)} y2={y(config.radialLimitMps)} stroke="var(--c-bad)" strokeDasharray="4 3" />
+          <line x1={PAD.left} x2={width - PAD.right} y1={y(config.radialLimitMps)} y2={y(config.radialLimitMps)} stroke="var(--bad)" strokeDasharray="4 3" />
         )}
-        {curve && <path d={curve} fill="none" stroke="var(--c-ref)" strokeWidth={1.5} strokeDasharray="5 3" />}
+        {curve && <path d={curve} fill="none" stroke="var(--ref)" strokeWidth={1.5} strokeDasharray="5 3" />}
         {pts.map((p) => (
           <circle key={p.frame} cx={x(p.rangeM ?? 0)} cy={y(dir * (p.radialMps ?? 0))} r={2.5} fill={color(p.verdict)} fillOpacity={0.85} />
         ))}
       </svg>
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-[38px] text-label text-muted">
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-[38px] text-caption text-muted">
         <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden className="h-2 w-2 rounded-full bg-accent" />
+          <span aria-hidden className="h-2 w-2 rounded-full bg-tint" />
           採用
         </span>
         <span className="inline-flex items-center gap-1.5">
@@ -111,14 +111,14 @@ export function ScatterPlot({
           剔除（離群、方向、上限）
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden className="h-2 w-2 rounded-full bg-subtle" />
+          <span aria-hidden className="h-2 w-2 rounded-full bg-faint" />
           窗口外、靜止
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span aria-hidden className="inline-block w-4 border-t-[1.5px] border-dashed border-ref" />
           平坦路面理論值
         </span>
-        <span className="text-subtle">縱軸：徑向速度（m/s，已依朝向轉正）</span>
+        <span className="text-faint">縱軸：徑向速度（m/s，已依朝向轉正）</span>
       </div>
     </div>
   );

@@ -5,8 +5,9 @@ import { useState } from 'react';
 import { radarStore, useRadar } from '../../../application/container';
 import { LIMITS, diffConfig, groundWindow } from '../../../domain/protocol';
 import type { EditableConfig, SpeedModel } from '../../../domain/types';
-import { Button, Field, FieldGroup, Notice, NumberInput, Panel, Segmented, inRange } from '../../kit';
+import { Card, Notice, Row, Section, Segmented, Stepper, inRange } from '../../kit';
 import { MountDiagram } from '../../widgets/MountDiagram';
+import { PendingBar } from '../common/PendingBar';
 
 type MountFields = Pick<EditableConfig, 'angleDeg' | 'heightM' | 'direction' | 'model'>;
 
@@ -17,9 +18,11 @@ export function MountPanel() {
 
   if (!config) {
     return (
-      <Panel title="安裝幾何">
-        <p className="text-body text-muted">連線後會讀取裝置目前的安裝參數。</p>
-      </Panel>
+      <Section id="mount" title="安裝幾何" description="雷達斜向下照路面">
+        <Card className="p-5">
+          <p className="text-subhead text-muted">連線後會讀取裝置目前的安裝參數。</p>
+        </Card>
+      </Section>
     );
   }
 
@@ -41,37 +44,24 @@ export function MountPanel() {
   };
 
   return (
-    <Panel
-      title="安裝幾何"
-      description="雷達斜向下照路面；角度用手機水平儀量雷達背面，高度量天線面中心到地面"
-      footer={
-        pending.length > 0 ? (
-          <>
-            <span className="mr-auto text-label text-muted">{pending.length} 項變更尚未套用</span>
-            <Button variant="ghost" onClick={() => setDraft({})}>
-              還原
-            </Button>
-            <Button variant="primary" disabled={!valid || applying} onClick={() => void apply()}>
-              {applying ? '套用中…' : '套用到裝置'}
-            </Button>
-          </>
-        ) : undefined
-      }
-    >
-      <div className="-mx-4 -mt-4 border-b border-line bg-sunken px-4 py-3">
-        <div className="mx-auto max-w-[440px]">
-          <MountDiagram angleDeg={value.angleDeg} heightM={value.heightM} direction={value.direction} />
+    <Section id="mount" title="安裝幾何" description="角度用手機水平儀量雷達背面；高度量天線面中心到地面">
+      <Card className="relative">
+        <div className="m-2 rounded-[14px] bg-surface-2 px-3 py-2">
+          <div className="mx-auto max-w-[440px]">
+            <MountDiagram angleDeg={value.angleDeg} heightM={value.heightM} direction={value.direction} />
+          </div>
         </div>
-      </div>
-      <div className="-mx-4 -mb-4">
-        <FieldGroup>
-          <Field label="俯角 θ" description="視軸與水平面的夾角。建議 40～45°：越大越不怕超過測速上限，但角度誤差影響越大（1° ≈ 1.7%）">
-            <NumberInput label="俯角" value={value.angleDeg} onChange={(v) => set({ angleDeg: v })} min={LIMITS.angleDeg.min} max={LIMITS.angleDeg.max} step={0.5} decimals={1} unit="°" />
-          </Field>
-          <Field label="離地高度 h" description={`視軸打在 ${(value.heightM / Math.tan((value.angleDeg * Math.PI) / 180)).toFixed(2)} m 外的路面；地面距離窗口 ${preview.minM.toFixed(2)}～${preview.maxM.toFixed(2)} m`}>
-            <NumberInput label="離地高度" value={value.heightM} onChange={(v) => set({ heightM: v })} min={LIMITS.heightM.min} max={LIMITS.heightM.max} step={0.01} decimals={2} unit="m" />
-          </Field>
-          <Field label="雷達朝向" description="朝後：裝在後貨架尾端，照車輪後方的路面（建議）">
+        <div className="[&>*+*]:border-t [&>*+*]:border-line">
+          <Row label="俯角 θ" detail="建議 40～45°；1° 誤差約 1.7%">
+            <Stepper label="俯角" value={value.angleDeg} onChange={(v) => set({ angleDeg: v })} min={LIMITS.angleDeg.min} max={LIMITS.angleDeg.max} step={0.5} decimals={1} unit="°" width="w-12" />
+          </Row>
+          <Row
+            label="離地高度 h"
+            detail={`視軸打在 ${(value.heightM / Math.tan((value.angleDeg * Math.PI) / 180)).toFixed(2)} m 外；窗口 ${preview.minM.toFixed(2)}～${preview.maxM.toFixed(2)} m`}
+          >
+            <Stepper label="離地高度" value={value.heightM} onChange={(v) => set({ heightM: v })} min={LIMITS.heightM.min} max={LIMITS.heightM.max} step={0.01} decimals={2} unit="m" width="w-12" />
+          </Row>
+          <Row label="雷達朝向" detail="朝後：裝在後貨架尾端（建議）">
             <Segmented
               label="雷達朝向"
               value={value.direction}
@@ -81,17 +71,19 @@ export function MountPanel() {
                 { value: -1, label: '朝前' },
               ]}
             />
-          </Field>
-          <Field
+          </Row>
+          <Row
             label="速度模型"
-            description={
+            stack
+            detail={
               value.model === 'fixedAngle'
                 ? '固定角度：v = CAL·|vr| / cos θ。文獻上的標準作法，不依賴雷達距離的準確度'
-                : '距離幾何：每一筆用 sin α = h / 距離 算俯角。可降低路面材質造成的偏差，但需要準確的高度與雷達距離（實驗性）'
+                : '距離幾何：每一筆用 sin α = h / 距離 算俯角。可降低路面材質造成的偏差，但需要準確的高度與距離（實驗性）'
             }
           >
             <Segmented<SpeedModel>
               label="速度模型"
+              block
               value={value.model}
               onChange={(v) => set({ model: v })}
               options={[
@@ -99,18 +91,17 @@ export function MountPanel() {
                 { value: 'rangeGeometry', label: '距離幾何' },
               ]}
             />
-          </Field>
-        </FieldGroup>
+          </Row>
+        </div>
         {(geometryChanged || modelChanged) && (
-          <div className="border-t border-line p-4">
-            <Notice tone="info" title={modelChanged ? '換了速度模型，請重新校正' : '套用後 ESP32 會重新設定雷達'}>
-              {modelChanged
-                ? '兩種模型的校正係數意義不同；套用後到下方重新做距離校正。'
-                : '地面距離窗口會寫進 C4001，約 4 秒內沒有資料。安裝角度改變後也建議重新校正。'}
+          <div className="px-3 pb-3">
+            <Notice tone="info" flat title={modelChanged ? '換了速度模型，請重新校正' : '套用後 ESP32 會重新設定雷達'}>
+              {modelChanged ? '兩種模型的校正係數意義不同；套用後到下方重新做距離校正。' : '地面距離窗口會寫進 C4001，約 4 秒內沒有資料。角度改變後也建議重新校正。'}
             </Notice>
           </div>
         )}
-      </div>
-    </Panel>
+        <PendingBar count={pending.length} valid={valid} applying={applying} onReset={() => setDraft({})} onApply={() => void apply()} />
+      </Card>
+    </Section>
   );
 }

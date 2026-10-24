@@ -4,7 +4,10 @@
  * 模擬一段城市騎乘（起步、巡航、變速、停等），每 0.1 秒一筆資料框：路面散射點的俯角分散、
  * 偶爾沒有回波或雜散目標、輪速感測器參考值。速度輸出模擬校正後的韌體：約 0.2 秒落後、1σ 約 1.5%。
  */
+import { NO_OVERSPEED, overspeedEvidence, stepOverspeed } from '../../domain/overspeed';
 import { DEFAULT_CONFIG } from '../../domain/protocol';
+import { TraceBuilder } from '../../domain/trace';
+import type { SavedTrip } from '../../domain/trip';
 import type { EditableConfig } from '../../domain/types';
 import { Emitter, type RadarTransport, type TransportState } from './RadarTransport';
 
@@ -167,4 +170,72 @@ export class DemoTransport implements RadarTransport {
       `R=1 ST=${state} V=${speed.toFixed(2)} SD=${sd.toFixed(2)} Q=${q} WD=0 FN=${this.frame} N=${n} RD=${rd.toFixed(2)} RV=${rv.toFixed(2)} E=${e} G=${g.toFixed(2)} FV=${fv} DR=${this.dr.toFixed(1)} W=${wheel.toFixed(2)} DW=${this.dw.toFixed(1)} T=${Math.floor(300 + this.t)}`,
     );
   }
+}
+
+/** 固定種子的亂數（示範的行程每次都一樣，截圖才穩定） */
+function seeded(seed: number): () => number {
+  let x = seed;
+  return () => {
+    x = (x * 1664525 + 1013904223) % 4294967296;
+    return x / 4294967296;
+  };
+}
+
+/**
+ * 示範模式的行程紀錄：幾段通勤（巡航、紅燈停等、偶爾超過 25 km/h），每秒一筆模擬速度，
+ * 用和實際一樣的 TraceBuilder 產生速度曲線。
+ */
+export function demoTrips(now: number): SavedTrip[] {
+  const plans = [
+    { agoMin: 190, minutes: 24, cruise: 5.6, seed: 7 },
+    { agoMin: 60 * 24 - 35, minutes: 18, cruise: 5.2, seed: 11 },
+    { agoMin: 60 * 26 + 10, minutes: 31, cruise: 5.8, seed: 23 },
+    { agoMin: 60 * 72 + 50, minutes: 12, cruise: 4.8, seed: 5 },
+    { agoMin: 60 * 98, minutes: 42, cruise: 5.5, seed: 31 },
+  ];
+  const limitMps = 25 / 3.6;
+  return plans.map((p) => {
+    const rand = seeded(p.seed);
+    const startedAt = now - p.agoMin * 60_000;
+    const total = p.minutes * 60;
+    const trace = new TraceBuilder();
+    let v = 0;
+    let target = p.cruise;
+    let stopUntil = -1;
+    let distanceM = 0;
+    let movingS = 0;
+    let maxMps = 0;
+    let overS = 0;
+    let overCount = 0;
+    let over = NO_OVERSPEED;
+    for (let t = 0; t < total; t++) {
+      if (t % 45 === 0) target = p.cruise + (rand() - 0.45) * 2.2; // 每 45 秒換一個巡航速度
+      if (stopUntil < t && rand() < 0.006 && t > 60 && t < total - 60) stopUntil = t + 20 + Math.floor(rand() * 35); // 紅燈
+      const goal = t < stopUntil || t > total - 8 ? 0 : target;
+      v += Math.max(-1.6, Math.min(1.1, goal - v)) * 0.5 + (rand() - 0.5) * 0.15;
+      v = Math.max(0, v);
+      trace.update({ receivedAt: startedAt + t * 1000, speedMps: v });
+      distanceM += v;
+      if (v >= 0.5) movingS += 1;
+      maxMps = Math.max(maxMps, v);
+      // 和網頁一樣的超速判斷（持續 0.5 秒進入、低於速限 − 1 km/h 持續 1 秒解除）
+      const next = stepOverspeed(over, overspeedEvidence({ state: 'tracking', speedMps: v }, limitMps, null), startedAt + t * 1000);
+      if (next.active && !over.active) overCount += 1;
+      if (next.active && over.active) overS += 1;
+      over = next;
+    }
+    return {
+      id: `demo-${p.seed}`,
+      startedAt,
+      endedAt: startedAt + total * 1000,
+      distanceM,
+      movingS,
+      maxMps,
+      wheelDistanceM: distanceM * (1 - 0.004 + rand() * 0.008),
+      overspeedS: overS,
+      overspeedCount: overCount,
+      limitKmh: 25,
+      trace: trace.snapshot(),
+    };
+  });
 }

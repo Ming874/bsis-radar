@@ -2,6 +2,8 @@
  * 【基礎設施層】CSV 匯出：每一筆雷達資料框一列，給精度分析（雷達 vs 輪速、模型比較）用。
  * 欄位與遙測一一對應，定義見 docs/PROTOCOL.md。
  */
+import { tracePoints } from '../../domain/trace';
+import type { SavedTrip } from '../../domain/trip';
 import type { Telemetry } from '../../domain/types';
 
 const HEADER = [
@@ -73,9 +75,41 @@ export class CsvRecorder {
   }
 }
 
-/** 觸發瀏覽器下載（加 BOM，Excel 開啟中文才不會亂碼） */
+const iso = (ms: number) => new Date(ms).toISOString();
+const fixed = (v: number | null | undefined, digits: number) => (v === null || v === undefined || !Number.isFinite(v) ? '' : v.toFixed(digits));
+
+/** 行程紀錄 → CSV（「行程」頁的匯出）：一筆行程一列 */
+export function tripsCsv(trips: SavedTrip[]): string {
+  const header = 'start_iso,end_iso,distance_m,moving_s,elapsed_s,avg_kmh,max_kmh,overspeed_count,overspeed_s,limit_kmh,wheel_distance_m';
+  const rows = trips.map((t) =>
+    [
+      iso(t.startedAt),
+      iso(t.endedAt),
+      fixed(t.distanceM, 1),
+      fixed(t.movingS, 0),
+      fixed((t.endedAt - t.startedAt) / 1000, 0),
+      t.movingS >= 1 ? fixed((t.distanceM / t.movingS) * 3.6, 2) : '',
+      fixed(t.maxMps * 3.6, 2),
+      t.overspeedCount ?? '',
+      fixed(t.overspeedS, 1),
+      fixed(t.limitKmh, 0),
+      fixed(t.wheelDistanceM, 1),
+    ].join(','),
+  );
+  return [header, ...rows].join('\n');
+}
+
+/** 一筆行程的速度曲線 → CSV：每一格一列（沒有資料的格子留空） */
+export function traceCsv(trip: SavedTrip): string {
+  if (!trip.trace) return 'elapsed_s,speed_kmh';
+  const rows = tracePoints(trip.trace).map((p) => `${p.s},${p.mps === null ? '' : (p.mps * 3.6).toFixed(2)}`);
+  return ['elapsed_s,speed_kmh', ...rows].join('\n');
+}
+
+/** 觸發瀏覽器下載 */
 export function downloadText(filename: string, content: string, mime = 'text/csv'): void {
-  const blob = new Blob(['﻿', content], { type: `${mime};charset=utf-8` });
+  // CSV 加 BOM（Excel 才認得 UTF-8）；JSON 不加
+  const blob = new Blob(mime === 'text/csv' ? ['﻿', content] : [content], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

@@ -61,6 +61,8 @@ export interface CalibrationActions {
   clearRuns: () => void;
   markApplied: (from: number, to: number) => void;
   resetAgreement: () => void;
+  /** 匯入備份：校正紀錄依 id 合併，上次套用取比較新的；回傳新增幾趟 */
+  importData: (data: Pick<CalibrationState, 'runs' | 'lastApplied'>) => number;
 }
 
 export type CalibrationStore = CalibrationState & CalibrationActions;
@@ -182,6 +184,16 @@ export function createCalibrationStore(deps: CalibrationStoreDeps) {
       resetAgreement: () => {
         agreement.reset();
         set({ agreement: agreement.stats() });
+      },
+
+      importData: (data) => {
+        const ids = new Set(get().runs.map((r) => r.id));
+        const fresh = data.runs.filter((r) => !ids.has(r.id));
+        const current = get().lastApplied;
+        if (data.lastApplied && (!current || data.lastApplied.at > current.at)) set({ lastApplied: data.lastApplied });
+        if (fresh.length > 0) setRuns([...get().runs, ...fresh].sort((a, b) => a.at - b.at));
+        else persist();
+        return fresh.length;
       },
     };
   });

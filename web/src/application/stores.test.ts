@@ -163,6 +163,51 @@ describe('tripStore 與 calibrationStore', () => {
     expect(trip.getState().current.distanceM).toBe(0);
   });
 
+  it('行程：存下速度曲線與當時的速限', () => {
+    let now = 0;
+    const trip = createTripStore({ now: () => now, loadTrips: () => [], saveTrips: () => undefined, speedLimitKmh: () => 25 });
+    for (let k = 0; k <= 30; k++) trip.getState().onTelemetry(tele(k * 100, k * 5, null));
+    now = 3100;
+    const saved = trip.getState().finish();
+    expect(saved?.distanceM).toBe(150);
+    expect(saved?.limitKmh).toBe(25);
+    expect(saved?.trace?.v.slice(0, 3)).toEqual([500, 500, 500]);
+    expect(trip.getState().trace.v).toEqual([]);
+  });
+
+  it('行程：2 小時內重新打開就接續（ESP32 沒重開機時中間騎的也算）；太久就存進紀錄', () => {
+    const stored: unknown[] = [];
+    let now = 1_000_000;
+    const first = createTripStore({ now: () => now, loadTrips: () => [], saveTrips: () => undefined, saveCurrent: (r) => stored.push(r) });
+    for (let k = 0; k <= 60; k++) first.getState().onTelemetry(tele(now + k * 100, 100 + k, null));
+    first.getState().persist();
+    const record = stored[stored.length - 1];
+    expect(first.getState().current.distanceM).toBe(60);
+
+    now += 10 * 60_000; // 10 分鐘後重新打開，ESP32 的里程又多了 40 m
+    const resumed = createTripStore({ now: () => now, loadTrips: () => [], saveTrips: () => undefined, loadCurrent: () => record });
+    expect(resumed.getState().resumed).toBe(true);
+    resumed.getState().onTelemetry(tele(now, 200, null));
+    expect(resumed.getState().current.distanceM).toBe(100);
+
+    let trips: unknown[] = [];
+    now += 3 * 3600_000; // 3 小時後：自動存進紀錄，從 0 開始
+    const later = createTripStore({ now: () => now, loadTrips: () => [], saveTrips: (t) => (trips = t), loadCurrent: () => record, saveCurrent: () => undefined });
+    expect(later.getState().resumed).toBe(false);
+    expect(later.getState().autoSaved?.distanceM).toBe(60);
+    expect(trips).toHaveLength(1);
+    expect(later.getState().current.distanceM).toBe(0);
+  });
+
+  it('行程：壞掉的存檔不接續；匯入時同一筆不重複', () => {
+    const trip = createTripStore({ now: () => 0, loadTrips: () => [], saveTrips: () => undefined, loadCurrent: () => ({ meter: { distanceM: 'x' } }) });
+    expect(trip.getState().resumed).toBe(false);
+    const one = { id: 'a', startedAt: 1, endedAt: 2, distanceM: 100, movingS: 20, maxMps: 5, wheelDistanceM: null };
+    expect(trip.getState().importTrips([one, one])).toBe(1);
+    expect(trip.getState().importTrips([one])).toBe(0);
+    expect(trip.getState().trips).toHaveLength(1);
+  });
+
   it('距離校正：開始 → 結束 → 輸入實際距離 → 建議係數', () => {
     const persisted: unknown[] = [];
     const cal = createCalibrationStore({ now: () => 0, load: () => ({ runs: [], lastApplied: null }), save: (d) => persisted.push(d) });

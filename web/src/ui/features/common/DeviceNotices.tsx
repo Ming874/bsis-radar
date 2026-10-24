@@ -55,7 +55,7 @@ export function DeviceNotices() {
   if (s.state === 'overRange') {
     notices.push(
       <Notice key="over" tone="bad" title="超出雷達測速上限">
-        徑向速度接近 VMAX，雷達讀值不可靠。降低車速後會自動恢復；若在一般車速就出現，請到「數據」頁確認 C4001 的實際上限並調整 VMAX。
+        徑向速度接近 VMAX，雷達讀值不可靠。降低車速後會自動恢復；若在一般車速就出現，請依上手文件 §10.1 確認 C4001 的實際上限，再到「設定 → 裝置參數」調整 VMAX。
         {limit.on &&
           (s.unambiguousMps !== null && s.unambiguousMps >= kmhToMps(limit.kmh)
             ? ` 雷達的上限高於速限 ${limit.kmh} km/h，這時一定已經超速。`
@@ -71,7 +71,7 @@ export function DeviceNotices() {
         tone="warn"
         title="多數資料框的速度方向與設定相反"
         action={
-          <Button size="sm" onClick={() => void radarStore.getState().sendCommand({ type: 'direction', dir: next })}>
+          <Button size="sm" variant="tinted" onClick={() => void radarStore.getState().sendCommand({ type: 'direction', dir: next })}>
             改成「雷達{next === 1 ? '朝後' : '朝前'}」
           </Button>
         }
@@ -81,5 +81,5 @@ export function DeviceNotices() {
     );
   }
   if (notices.length === 0) return null;
-  return <div className="mb-4 flex flex-col gap-3">{notices}</div>;
+  return <div className="mb-4 flex flex-col gap-2.5">{notices}</div>;
 }

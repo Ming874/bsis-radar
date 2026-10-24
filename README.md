@@ -8,18 +8,19 @@ ESP32 讀取裝在後貨架尾端、**斜向下照路面**的 DFRobot C4001 24 G
 3.0 起，這顆雷達的用途由「後方來車偵測」改為「對地測速」；後方來車改由另一套倒車雷達負責，不在這個 repo。舊版保留在 git 歷史（韌體 2.4.0，commit `8a5c3b6`）。
 
 <p align="center">
-  <img src="docs/images/phone-speed.png" width="240" alt="手機版速度頁（深色）">
-  <img src="docs/images/phone-speed-light.png" width="240" alt="手機版速度頁（淺色）">
-  <img src="docs/images/phone-calibrate.png" width="240" alt="手機版校正頁：安裝幾何示意圖">
+  <img src="docs/images/phone-speed.png" width="200" alt="手機版速度頁（深色）">
+  <img src="docs/images/phone-trip-detail.png" width="200" alt="行程詳情：速度曲線">
+  <img src="docs/images/phone-calibrate.png" width="200" alt="校正頁：設定進度與安裝幾何">
+  <img src="docs/images/phone-ride-alert.png" width="200" alt="騎乘模式：超速時整個畫面變紅">
 </p>
 <p align="center">
-  <img src="docs/images/desktop-data.png" width="760" alt="電腦版數據頁：即時資料框、距離 × 徑向速度散佈圖、判斷統計">
+  <img src="docs/images/desktop-speed.png" width="760" alt="電腦版速度頁：對地速度、本次行程、速度趨勢、量測設定">
 </p>
 <p align="center"><sub>截圖為示範模式（<code>?demo</code>）的模擬資料。</sub></p>
 
 | | 網址 |
 | --- | --- |
-| 網頁（手機、電腦） | <https://bsis.mingchen.dev> |
+| 網頁（手機、電腦；可安裝成 App） | <https://bsis.mingchen.dev> |
 | 示範模式（不需要硬體） | <https://bsis.mingchen.dev/?demo> |
 | 原始碼 | <https://github.com/Ming874/bsis-radar> |
 
@@ -63,6 +64,8 @@ CAL 是現地校正得到的係數，吸收寬波束造成的偏差（[ALGORITHM
 - 靜止／擷取／追蹤／保持／中斷的狀態機。
 - 以量測值積分里程。
 
+**網頁**（[web/README.md](web/README.md)）：速度、行程（每筆含速度曲線）、校正、數據、設定五個分頁，加上騎乘模式（全螢幕儀表）。可以安裝成 App（PWA）：用瀏覽器打開會提醒安裝，沒有網路也打得開。
+
 **網頁的超速警示**（[SPEED_ALERT.md](docs/SPEED_ALERT.md)）：對地速度持續 0.5 秒達到速限（預設 25 km/h）時，數字與外框變紅、響兩聲並震動；降到速限 − 1 km/h 以下 1 秒後解除。速限附近的讀值依賴測速上限的驗收與校正。
 
 ## 精度與限制
@@ -82,7 +85,7 @@ CAL 是現地校正得到的係數，吸收寬波束造成的偏差（[ALGORITHM
 | 項目 | 狀態 |
 | --- | --- |
 | 韌體單元測試與模擬 | 318 項通過（`firmware\arduino.ps1 test`） |
-| 網頁單元測試、lint、型別檢查 | 68 項通過（`npm test`、`npm run lint`、`npm run build`） |
+| 網頁單元測試、lint、型別檢查 | 100 項通過（`npm test`、`npm run lint`、`npm run build`） |
 | 實機（桌上） | 韌體 3.0.0 已燒錄；C4001 接受地面距離窗口（讀回 `getRange：0.620 2.400`），10 Hz 輸出正常 |
 | 實車驗收 | 待進行：[上手文件](docs/GETTING_STARTED.md) §10 的項目 A～H |
 
@@ -104,7 +107,7 @@ bsis-radar/
 │  ├─ release/             預先編譯的韌體（給 flash.bat）
 │  ├─ arduino.ps1          編譯、燒錄、監看、測試、輸出 release
 │  └─ flash.bat / .ps1     一鍵燒錄
-└─ web/                    網頁（React + TypeScript + Vite），push 到 main 自動部署
+└─ web/                    網頁（React + TypeScript + Vite，PWA），push 到 main 自動部署
 ```
 
 ## 版本
@@ -112,5 +115,5 @@ bsis-radar/
 | 元件 | 版本 | 說明 |
 | --- | --- | --- |
 | 韌體 | 3.0.0 | 對地測速。藍牙名稱 `BSIS-Speed`，NVS 命名空間 `speedRadar` |
-| 網頁 | 2.1.0 | 對應韌體 3.x；連上 2.x 韌體時提示更新。2.1 加入超速警示 |
+| 網頁 | 3.0.0 | 對應韌體 3.x；連上 2.x 韌體時提示更新。2.1 加入超速警示；3.0 重新設計手機介面（與 Lodestar 統一的設計語言）、行程頁與速度曲線、騎乘模式、安裝成 App、備份 |
 | 舊版 | 韌體 2.4.0／網頁 1.6.0 | 後方來車偵測，commit `8a5c3b6` |

@@ -1,18 +1,35 @@
 {
-  "name": "BSIS 測速",
+  "id": "/",
+  "name": "BSIS 對地測速",
   "short_name": "BSIS 測速",
-  "description": "毫米波雷達對地測速：以 Web Bluetooth 連線 ESP32 與 C4001 雷達",
+  "description": "毫米波雷達對地測速：以藍牙連線 ESP32 與 C4001 雷達，顯示自行車的對地速度、行程與校正",
   "lang": "zh-Hant-TW",
-  "start_url": "/",
+  "dir": "ltr",
+  "start_url": "/#/speed",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#0c0d0f",
-  "theme_color": "#131518",
+  "display_override": ["standalone"],
+  "orientation": "any",
+  "background_color": "#1765e5",
+  "theme_color": "#f2f3f5",
+  "categories": ["sports", "utilities", "education"],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "related_applications": [{ "platform": "webapp", "url": "/manifest.json", "id": "/" }],
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "騎乘模式", "short_name": "騎乘", "description": "全螢幕的速度儀表", "url": "/#/ride", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "行程紀錄", "short_name": "行程", "url": "/#/trips", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "校正", "short_name": "校正", "url": "/#/calibrate", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+  ],
+  "screenshots": [
+    { "src": "/screenshots/phone-speed.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "速度：對地速度與本次行程" },
+    { "src": "/screenshots/phone-trips.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "行程：紀錄與速度曲線" },
+    { "src": "/screenshots/phone-calibrate.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "校正：設定進度與安裝幾何" },
+    { "src": "/screenshots/desktop-speed.png", "sizes": "1440x900", "type": "image/png", "form_factor": "wide", "label": "電腦版：速度與量測設定" }
   ]
 }

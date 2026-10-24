@@ -66,3 +66,34 @@ export function fileStamp(epochMs: number): string {
   const d = new Date(epochMs);
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
+
+/** 時間戳 → 「14:03」 */
+export function formatHm(epochMs: number): string {
+  const d = new Date(epochMs);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const WEEKDAY = '日一二三四五六';
+const dayStart = (ms: number) => {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+};
+
+/** 行程列表的日期標題：「今天」「昨天」「10/22（四）」，不是今年的加上年份 */
+export function formatDayLabel(epochMs: number, now: number): string {
+  const days = Math.round((dayStart(now) - dayStart(epochMs)) / 86_400_000);
+  if (days === 0) return '今天';
+  if (days === 1) return '昨天';
+  const d = new Date(epochMs);
+  const md = `${d.getMonth() + 1}/${d.getDate()}（${WEEKDAY[d.getDay()]}）`;
+  return d.getFullYear() === new Date(now).getFullYear() ? md : `${d.getFullYear()}/${md}`;
+}
+
+/** 秒數 → 「1 小時 5 分」「12 分」「45 秒」（行程的總時間） */
+export function formatDurationWords(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds));
+  if (s < 60) return `${s} 秒`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h} 小時 ${m} 分` : `${m} 分`;
+}

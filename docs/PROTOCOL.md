@@ -141,3 +141,28 @@ time_iso,uptime_s,frame,radar_online,state,speed_mps,sigma_mps,quality_pct,targe
 ```
 
 `state` 與 `verdict` 以名稱表示（`tracking`、`accepted`…）。分析工具：[`firmware/diagnostics/analyze_ride.py`](../firmware/diagnostics/README.md)。
+
+## 7. 網頁的匯出檔
+
+這兩種檔案只在網頁產生，不經過 ESP32。
+
+**行程紀錄**（「行程」頁的匯出，CSV，UTF-8 含 BOM）：一筆行程一列。
+
+```text
+start_iso,end_iso,distance_m,moving_s,elapsed_s,avg_kmh,max_kmh,overspeed_count,overspeed_s,limit_kmh,wheel_distance_m
+```
+
+`avg_kmh` 是里程 ÷ 移動時間；沒有的欄位留空（網頁 2.1 以前的行程沒有超速，3.0 以前沒有 `limit_kmh`）。
+
+**一筆行程的速度曲線**（行程詳情的匯出，CSV）：`elapsed_s,speed_kmh`。每一格是那段時間的平均速度，間隔從 1 秒開始，點數到 900 時兩兩合併、間隔加倍（一小時的行程是 4 秒一格）；藍牙中斷的那幾格留空。
+
+**備份檔**（「設定 → 資料 → 匯出備份」，JSON）：
+
+```json
+{ "app": "bsis-speed", "version": 1, "exportedAt": 1792000000000, "webVersion": "3.0.0",
+  "settings": { "speedUnit": "kmh", "speedLimitKmh": 25, "...": "..." },
+  "trips": [ { "id": "…", "startedAt": 0, "endedAt": 0, "distanceM": 0, "movingS": 0, "maxMps": 0, "trace": { "stepS": 1, "v": [512, -1, 530] } } ],
+  "calibration": { "runs": [ { "id": "…", "method": "distance", "radarM": 95.2, "referenceM": 100, "calibrationUsed": 1 } ], "lastApplied": null } }
+```
+
+`trace.v` 是 cm/s 的整數，`-1` 代表那一格沒有資料。匯入時逐筆檢查：格式不對的行程或校正紀錄略過；設定只取認得的欄位；行程與校正紀錄依 `id` 合併，不會重複。

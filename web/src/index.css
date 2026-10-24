@@ -1,113 +1,280 @@
 @import 'tailwindcss';
 
-/* 用 <html class="dark"> 切換深色（設定頁可選深色 / 淺色 / 跟隨系統，預設深色） */
+/* 用 <html class="dark"> 切換深色（設定頁可選跟隨系統 / 淺色 / 深色，預設跟隨系統） */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
  * ── 設計基準（Design Tokens）──────────────────────────────────────────
- * 儀表風格：中性灰階為主，只有一個重點色（藍）用在可操作元件與雷達資料；
- * 綠／黃／紅只表示狀態。1 px 邊框、小圓角、不用陰影與漸層。
- * 元件只用這些語意化名稱（bg-panel、text-muted、border-line…），深淺色只在這裡切換。
+ * 和 Lodestar 同一套設計語言（名稱也一樣：bg、surface、ink、muted、faint、line、tint）：
+ * - 層次：頁面底色 bg → 內容卡片 surface（不透明）→ 浮在內容上的導覽（分頁列、縮小的頁首）用半透明材質 chrome
+ * - 顏色：中性灰階 + 一個重點色（藍，tint）用在可操作元件與雷達資料；綠／黃／紅只表示狀態
+ * - 不用漸層、光暈、彩色圖示底；卡片不加陰影（只有浮在內容上的元件有很淡的陰影）
+ * 元件只用這些語意化名稱，深淺色只在這裡切換。
  */
 @theme inline {
-  --color-canvas: var(--c-canvas); /* 頁面底色 */
-  --color-panel: var(--c-panel); /* 面板 */
-  --color-sunken: var(--c-sunken); /* 輸入框、軌道、表頭 */
-  --color-hover: var(--c-hover); /* 滑過、選取 */
-  --color-line: var(--c-line); /* 邊框、分隔線 */
-  --color-line-strong: var(--c-line-strong);
-  --color-fg: var(--c-fg); /* 主要文字 */
-  --color-muted: var(--c-muted); /* 次要文字 */
-  --color-subtle: var(--c-subtle); /* 提示、停用、座標軸 */
-  --color-accent: var(--c-accent); /* 重點色：連結、焦點、雷達資料線 */
-  --color-accent-strong: var(--c-accent-strong); /* 主要按鈕底色（白字對比 ≥ 4.5） */
-  --color-ref: var(--c-ref); /* 參考值（輪速感測器）資料線 */
-  --color-ok: var(--c-ok);
-  --color-warn: var(--c-warn);
-  --color-bad: var(--c-bad);
+  --color-bg: var(--bg); /* 頁面底色 */
+  --color-surface: var(--surface); /* 卡片、面板 */
+  --color-surface-2: var(--surface-2); /* 卡片裡的輸入框、分段控制的軌道、按下 */
+  --color-surface-3: var(--surface-3); /* 開關關閉時的軌道 */
+  --color-line: var(--line); /* 分隔線 */
+  --color-line-strong: var(--line-strong); /* 座標軸、外框 */
+  --color-ink: var(--ink); /* 主要文字 */
+  --color-muted: var(--muted); /* 次要文字（≥ 4.5:1） */
+  --color-faint: var(--faint); /* 提示、停用、圖示 */
+  --color-tint: var(--tint); /* 重點色：連結、選中、雷達資料線 */
+  --color-tint-solid: var(--tint-solid); /* 主要按鈕底色（白字 ≥ 4.5:1） */
+  --color-tint-soft: var(--tint-soft); /* 選中的淡底 */
+  --color-ref: var(--ref); /* 參考值（輪速感測器）資料線 */
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-bad-solid: var(--bad-solid); /* 超速的實心底（白字 ≥ 4.5:1） */
 
-  --font-sans: system-ui, -apple-system, 'Segoe UI', 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', Menlo, Consolas, monospace;
 
-  /* 字級：標籤 / 內文 / 數值 / 面板標題 / 統計數字 */
-  --text-label: 0.75rem;
-  --text-label--line-height: 1rem;
-  --text-body: 0.875rem;
-  --text-body--line-height: 1.375rem;
-  --text-value: 0.9375rem;
-  --text-value--line-height: 1.25rem;
-  --text-heading: 0.875rem;
-  --text-heading--line-height: 1.25rem;
-  --text-stat: 1.5rem;
-  --text-stat--line-height: 1.875rem;
+  /* 字級（手機優先）：說明 / 註腳 / 次要內文 / 內文 / 標題列 / 區塊標題 / 統計數字 */
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-footnote: 0.8125rem;
+  --text-footnote--line-height: 1.125rem;
+  --text-subhead: 0.9375rem;
+  --text-subhead--line-height: 1.375rem;
+  --text-body: 1rem;
+  --text-body--line-height: 1.5rem;
+  --text-headline: 1.0625rem;
+  --text-headline--line-height: 1.375rem;
+  --text-title: 1.25rem;
+  --text-title--line-height: 1.625rem;
+  --text-stat: 1.625rem;
+  --text-stat--line-height: 2rem;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --radius-card: 20px;
+  --radius-control: 12px;
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 :root {
-  --c-canvas: #f4f5f7;
-  --c-panel: #ffffff;
-  --c-sunken: #f0f2f5;
-  --c-hover: #e8ebef;
-  --c-line: #dde1e6;
-  --c-line-strong: #c3c9d1;
-  --c-fg: #15181c;
-  --c-muted: #545b65;
-  --c-subtle: #858c96;
-  --c-accent: #1f6feb;
-  --c-accent-strong: #1a5fce;
-  --c-ref: #7b828c;
-  --c-ok: #16805a;
-  --c-warn: #b4741a;
-  --c-bad: #cf3a3a;
+  --bg: #f2f3f5;
+  --surface: #ffffff;
+  --surface-2: #f0f1f4;
+  --surface-3: #e3e5ea;
+  --line: rgba(17, 17, 20, 0.08);
+  --line-strong: rgba(17, 17, 20, 0.18);
+  --ink: #111114;
+  --muted: #62656d;
+  --faint: #9a9da5;
+  --tint: #1765e5;
+  --tint-solid: #1765e5;
+  --tint-soft: rgba(23, 101, 229, 0.1);
+  --ref: #8a8f98;
+  --ok: #16805a;
+  --warn: #b4741a;
+  --bad: #d03838;
+  --bad-solid: #d03838;
+  --chrome: rgba(250, 250, 252, 0.82);
+  --chrome-line: rgba(17, 17, 20, 0.08);
+  --float-shadow: 0 10px 30px -12px rgba(20, 24, 40, 0.28), 0 2px 6px -2px rgba(20, 24, 40, 0.06);
+  --card-ring: 0 1px 2px rgba(20, 24, 40, 0.04);
+  --scrim: rgba(17, 17, 20, 0.32);
   color-scheme: light;
   -webkit-tap-highlight-color: transparent;
 }
 
 .dark {
-  --c-canvas: #0c0d0f;
-  --c-panel: #131518;
-  --c-sunken: #1a1d21;
-  --c-hover: #20242a;
-  --c-line: #262a30;
-  --c-line-strong: #363b44;
-  --c-fg: #e7e9ec;
-  --c-muted: #a0a6af;
-  --c-subtle: #6c737d;
-  --c-accent: #5a9dff;
-  --c-accent-strong: #2e6fd6;
-  --c-ref: #9097a1;
-  --c-ok: #3fb68b;
-  --c-warn: #e0a23e;
-  --c-bad: #ef5b5b;
+  --bg: #000000;
+  --surface: #16161a;
+  --surface-2: #222228;
+  --surface-3: #33333b;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.2);
+  --ink: #f5f5f7;
+  --muted: #a1a1aa;
+  --faint: #6b6b74;
+  --tint: #4d8eff;
+  --tint-solid: #2a6be6;
+  --tint-soft: rgba(77, 142, 255, 0.16);
+  --ref: #8e949e;
+  --ok: #3fb68b;
+  --warn: #e0a23e;
+  --bad: #ff5a5a;
+  --bad-solid: #c62828;
+  --chrome: rgba(30, 30, 36, 0.8);
+  --chrome-line: rgba(255, 255, 255, 0.1);
+  --float-shadow: 0 16px 40px -16px rgba(0, 0, 0, 0.85), 0 2px 6px -2px rgba(0, 0, 0, 0.5);
+  --card-ring: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --scrim: rgba(0, 0, 0, 0.6);
   color-scheme: dark;
 }
 
 html {
-  background-color: var(--c-canvas);
+  background-color: var(--bg);
 }
 
 body {
   margin: 0;
   overscroll-behavior-y: none;
-  font-feature-settings: 'tnum' 0;
+  /* 按鈕連點兩下不要放大頁面 */
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
 }
 
-/* 數字對齊（速度、距離、時間） */
-.tabular {
-  font-variant-numeric: tabular-nums;
-}
+@layer components {
+  /* 數字：等寬數字，速度、距離、時間跳動時版面不會動 */
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
 
-/* 數字輸入框不顯示瀏覽器的上下箭頭 */
-.no-spin {
-  appearance: textfield;
-}
-.no-spin::-webkit-outer-spin-button,
-.no-spin::-webkit-inner-spin-button {
-  appearance: none;
-  margin: 0;
+  /* 主速度、騎乘模式的大字 */
+  .display {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    line-height: 0.92;
+  }
+
+  .large-title {
+    font-size: 30px;
+    line-height: 1.15;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+  }
+
+  /* 區塊上方的小標（設定頁的群組名） */
+  .eyebrow {
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    box-shadow: var(--card-ring);
+  }
+
+  /* 浮在內容上的導覽：半透明材質，捲過去的內容看得到一點、不搶眼 */
+  .chrome {
+    background: var(--chrome);
+    -webkit-backdrop-filter: blur(20px) saturate(1.6);
+    backdrop-filter: blur(20px) saturate(1.6);
+    border: 1px solid var(--chrome-line);
+    box-shadow: var(--float-shadow);
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .chrome {
+      background: var(--surface);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .chrome {
+      background: var(--surface);
+    }
+  }
+
+  /* 數字輸入框不顯示瀏覽器的上下箭頭 */
+  .no-spin {
+    appearance: textfield;
+  }
+  .no-spin::-webkit-outer-spin-button,
+  .no-spin::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+
+  /* 捲動條：細、不搶眼（電腦） */
+  .thin-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+
+  /* 換頁：內容淡入、往上一點。只用 backwards：播完就不留 transform，
+     不然裡面 position: fixed 的元素（縮小的頁首）會變成跟著頁面捲動 */
+  .page-enter {
+    animation: page-enter 260ms var(--ease-spring) backwards;
+  }
+  @keyframes page-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+
+  /* 底部面板：從下面滑上來；電腦是置中的對話框 */
+  .sheet-scrim {
+    transition: opacity 220ms ease;
+  }
+  .sheet-panel {
+    transition: transform 340ms var(--ease-spring), opacity 200ms ease;
+  }
+  .sheet-panel[data-state='closed'] {
+    transform: translateY(100%);
+  }
+  @media (min-width: 640px) {
+    .sheet-panel[data-state='closed'] {
+      transform: translateY(16px) scale(0.98);
+      opacity: 0;
+    }
+  }
+  .sheet-panel[data-dragging] {
+    transition: none;
+  }
+
+  /* 分頁列：選中的底色用百分比位移，分頁列寬度怎麼變都對得準 */
+  .tab-lens {
+    transition: transform 380ms cubic-bezier(0.3, 1.2, 0.4, 1), opacity 150ms ease;
+  }
+  .tabbar {
+    transition: transform 300ms var(--ease-spring), opacity 200ms ease;
+  }
+  .tabbar[data-hidden] {
+    transform: translateY(calc(100% + 16px));
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* 縮小的頁首：捲過大標題後從上面滑下來 */
+  .compact-header {
+    transition: transform 260ms var(--ease-spring), opacity 180ms ease;
+  }
+  .compact-header[data-hidden] {
+    transform: translateY(-120%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* 提示訊息 */
+  .toast-enter {
+    animation: toast-enter 320ms var(--ease-spring) both;
+  }
+  @keyframes toast-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-12px) scale(0.98);
+    }
+  }
+  @media (min-width: 1024px) {
+    @keyframes toast-enter {
+      from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.98);
+      }
+    }
+  }
+
+  /* 按下去：縮一點（觸控回饋） */
+  .press {
+    transition: transform 120ms ease, background-color 150ms ease, opacity 150ms ease;
+  }
+  .press:active:not(:disabled) {
+    transform: scale(0.97);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -13,8 +13,10 @@
   - 電腦端測試用 `C:\MinGW\bin\g++`（GCC 6.3，C++14）；Windows 會擋暫存資料夾裡新編出來的 exe，測試執行檔要放在 `firmware/tests/`（已被 .gitignore 排除）
   - 騎乘紀錄分析：`firmware/diagnostics/analyze_ride.py`（Python 標準函式庫；這台電腦有 Python 3.13）
 - `web/`：網頁（React + TypeScript + Vite），`npm test`、`npm run lint`、`npm run build`；Node.js 在 `C:\Program Files\nodejs`（指令前要把它加進 PATH）
-  - UI 用統一設計系統 `web/src/ui/kit`（設計基準在 `web/src/index.css`：中性灰階、單一重點色、1 px 邊框、小圓角，不用漸層與陰影），頁面在 `ui/features`，外框在 `ui/shell`
-  - 手機版：底部分頁列；電腦版（≥ 1024 px）：左側選單 + 雙欄；分頁同步到網址 `#/speed` 等
+  - 設計語言和 Lodestar（`C:\GitHub\lodestar`）統一：同樣的 token 名稱（`bg`、`surface`、`ink`、`muted`、`faint`、`line`、`tint`）、大標題頁面、卡片 20 px 圓角、膠囊按鈕、底部面板、浮動分頁列；BSIS 的重點色是藍（`#1765e5`）。仍然不用漸層、光暈、彩色圖示底；只有浮在內容上的導覽用半透明材質。元件在 `web/src/ui/kit`、基準在 `web/src/index.css`，頁面在 `ui/features`，外框在 `ui/shell`
+  - 五個分頁：速度、行程、校正、數據、設定，加上騎乘模式（`#/ride`）；手機是浮動分頁列，電腦（≥ 1024 px）是左欄 + 雙欄；分頁同步到網址 `#/speed` 等
+  - PWA：用瀏覽器打開就提醒安裝（規則在 `infrastructure/pwa/install.ts`）；`public/sw.js` 照建置產生的 `precache.json` 離線快取；新版本靠 `/version.json` 比對，不自動重新載入（會中斷藍牙）
+  - 截圖：`npm run screenshots`（`scripts/screenshots.mjs`，DevTools Protocol 模擬手機；先 `npm run dev -- --port 5180`）
   - 示範模式 `?demo`（`infrastructure/transport/DemoTransport.ts`）：不需要硬體，也用來產生 `docs/images` 的截圖
   - 超速警示（預設 25 km/h，只在網頁端）：規則在 `domain/overspeed.ts`（遲滯 1 km/h、進入 0.5 秒、解除 1 秒），依據與限制在 `docs/SPEED_ALERT.md`
 - `docs/proposal/`（計畫書 PDF，含組員學號）不進 git

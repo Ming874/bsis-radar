@@ -8,21 +8,33 @@ import type { CalibrationMethod } from '../../../application/calibrationStore';
 import { MIN_CALIBRATION_M, checkCalibration, evaluateRun, roundCalibration } from '../../../domain/calibration';
 import { LIMITS } from '../../../domain/protocol';
 import { formatDateTime, formatPercent } from '../../../domain/units';
-import { Button, ConfirmDialog, EmptyState, IconButton, Notice, NumberInput, Panel, PlayIcon, Segmented, StopIcon, TrashIcon, inRange } from '../../kit';
+import { Button, Card, ConfirmSheet, EmptyState, IconButton, Notice, PlayIcon, Section, Segmented, Stepper, StopIcon, TrashIcon, cx, inRange } from '../../kit';
 
 const STEPS: Record<CalibrationMethod, string[]> = {
   distance: [
     '在平直的路面量好一段距離（建議 100 m，至少 30 m；操場直線跑道或捲尺），起點、終點做記號。',
-    '車子停在起點，前輪對準記號，按「開始」。',
-    '以平常的速度騎到終點，慢慢停下，前輪停在終點記號上，再按「結束」。',
+    '車子停在起點，前輪對準記號，按「開始一趟」。',
+    '以平常的速度騎到終點，慢慢停下，前輪停在終點記號上，再按「結束這一趟」。',
     '輸入實際距離。重複 3 趟，結果會依距離加權合併。',
   ],
   wheel: [
-    '先在「設定 → 輪周長」設好輪速感測器的輪周長（建議用滾動法實測）。',
-    '按「開始」，在平坦的路面正常騎 300 m 以上，避免急煞、打滑與上下人行道。',
-    '按「結束」：以同一段時間的輪速里程當參考距離。',
+    '先在「設定 → 裝置參數」設好輪周長（建議用滾動法實測）。',
+    '按「開始一趟」，在平坦的路面正常騎 300 m 以上，避免急煞、打滑與上下人行道。',
+    '按「結束這一趟」：以同一段時間的輪速里程當參考距離。',
   ],
 };
+
+function Big({ label, value, unit }: { label: string; value: string; unit?: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-footnote text-muted">{label}</div>
+      <div className="num mt-0.5 text-[2rem] leading-tight font-semibold tracking-tight text-ink">
+        {value}
+        {unit && <span className="ml-1 text-footnote font-normal text-muted">{unit}</span>}
+      </div>
+    </div>
+  );
+}
 
 function SessionView() {
   const s = useCalibration(useShallow((c) => ({ session: c.session, pending: c.pending })));
@@ -32,35 +44,25 @@ function SessionView() {
   if (s.session) {
     const sess = s.session;
     return (
-      <div className="rounded-md border border-line bg-sunken p-4">
+      <div className="rounded-2xl bg-tint-soft p-4">
         <div className="flex items-baseline justify-between gap-3">
-          <span className="text-label text-muted">{sess.method === 'distance' ? '距離校正進行中' : '輪速校正進行中'}</span>
-          <span className="text-label text-subtle">開始於 {formatDateTime(sess.startedAt)}</span>
+          <span className="text-footnote font-semibold text-tint">{sess.method === 'distance' ? '距離校正進行中' : '輪速校正進行中'}</span>
+          <span className="text-caption text-muted">開始於 {formatDateTime(sess.startedAt)}</span>
         </div>
-        <div className="mt-2 grid grid-cols-2 gap-4">
-          <div>
-            <div className="text-label text-muted">雷達量到</div>
-            <div className="tabular text-stat font-semibold text-fg">
-              {sess.radarM.toFixed(1)} <span className="text-label font-normal text-muted">m</span>
-            </div>
-          </div>
-          <div>
-            <div className="text-label text-muted">輪速感測器</div>
-            <div className="tabular text-stat font-semibold text-fg">
-              {sess.wheelM === null ? '—' : sess.wheelM.toFixed(1)} {sess.wheelM !== null && <span className="text-label font-normal text-muted">m</span>}
-            </div>
-          </div>
+        <div className="mt-3 grid grid-cols-2 gap-4">
+          <Big label="雷達量到" value={sess.radarM.toFixed(1)} unit="m" />
+          <Big label="輪速感測器" value={sess.wheelM === null ? '—' : sess.wheelM.toFixed(1)} unit={sess.wheelM === null ? undefined : 'm'} />
         </div>
         {sess.invalid && (
           <div className="mt-3">
-            <Notice tone="bad" title={sess.invalid} />
+            <Notice tone="bad" title={sess.invalid} flat />
           </div>
         )}
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => calibrationStore.getState().cancel()}>
+        <div className="mt-4 grid grid-cols-[auto_1fr] gap-2">
+          <Button variant="secondary" size="lg" onClick={() => calibrationStore.getState().cancel()}>
             取消
           </Button>
-          <Button variant="primary" icon={StopIcon} onClick={() => calibrationStore.getState().stop()}>
+          <Button variant="primary" size="lg" icon={StopIcon} onClick={() => calibrationStore.getState().stop()}>
             結束這一趟
           </Button>
         </div>
@@ -74,36 +76,31 @@ function SessionView() {
     const preview = reference !== null && reference > 0 ? evaluateRun({ radarM: p.radarM, referenceM: reference, calibrationUsed: p.calibrationUsed }) : null;
     const accept = () => setError(calibrationStore.getState().acceptPending(p.method === 'distance' ? referenceM : undefined));
     return (
-      <div className="rounded-md border border-line bg-sunken p-4">
-        <p className="text-body text-fg">
-          這一趟雷達量到 <span className="tabular font-mono">{p.radarM.toFixed(2)} m</span>
-          {p.method === 'wheel' && (
-            <>
-              ，輪速感測器 <span className="tabular font-mono">{p.wheelM === null ? '—' : `${p.wheelM.toFixed(2)} m`}</span>
-            </>
-          )}
-          。
-        </p>
+      <div className="rounded-2xl bg-surface-2 p-4">
+        <div className="grid grid-cols-2 gap-4">
+          <Big label="這一趟雷達量到" value={p.radarM.toFixed(2)} unit="m" />
+          {p.method === 'wheel' && <Big label="輪速感測器" value={p.wheelM === null ? '—' : p.wheelM.toFixed(2)} unit={p.wheelM === null ? undefined : 'm'} />}
+        </div>
         {p.method === 'distance' && (
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <label htmlFor="cal-reference" className="text-body text-muted">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <label htmlFor="cal-reference" className="text-subhead font-medium text-ink">
               實際距離
             </label>
-            <NumberInput id="cal-reference" label="實際距離" value={referenceM} onChange={setReferenceM} min={MIN_CALIBRATION_M} max={5000} step={10} decimals={1} unit="m" width="w-20" />
+            <Stepper id="cal-reference" label="實際距離" value={referenceM} onChange={setReferenceM} min={MIN_CALIBRATION_M} max={5000} step={10} decimals={1} unit="m" width="w-16" />
           </div>
         )}
         {preview && (
-          <p className="mt-3 text-label text-muted">
-            雷達誤差 <span className="tabular font-mono text-fg">{formatPercent(preview.errorPct, 2)}</span>；只看這一趟的新係數為{' '}
-            <span className="tabular font-mono text-fg">{roundCalibration(preview.newCalibration).toFixed(4)}</span>
+          <p className="mt-3 text-footnote text-muted">
+            雷達誤差 <span className="num font-semibold text-ink">{formatPercent(preview.errorPct, 2)}</span>；只看這一趟的新係數為{' '}
+            <span className="num font-semibold text-ink">{roundCalibration(preview.newCalibration).toFixed(4)}</span>
           </p>
         )}
-        {error && <p className="mt-2 text-label text-bad">{error}</p>}
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => calibrationStore.getState().discardPending()}>
-            放棄這一趟
+        {error && <p className="mt-2 text-footnote text-bad">{error}</p>}
+        <div className="mt-4 grid grid-cols-[auto_1fr] gap-2">
+          <Button variant="secondary" size="lg" onClick={() => calibrationStore.getState().discardPending()}>
+            放棄
           </Button>
-          <Button variant="primary" onClick={accept}>
+          <Button variant="primary" size="lg" onClick={accept}>
             加入結果
           </Button>
         </div>
@@ -113,40 +110,28 @@ function SessionView() {
   return null;
 }
 
-function RunsTable() {
+function RunsList() {
   const runs = useCalibration((c) => c.runs);
   if (runs.length === 0) return <EmptyState title="還沒有校正紀錄">完成一趟後會列在這裡；建議做 3 趟再套用。</EmptyState>;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-body">
-        <thead>
-          <tr className="border-b border-line text-left text-label text-muted">
-            <th className="py-2 pr-3 font-medium">#</th>
-            <th className="py-2 pr-3 font-medium">方式</th>
-            <th className="py-2 pr-3 text-right font-medium">雷達</th>
-            <th className="py-2 pr-3 text-right font-medium">參考</th>
-            <th className="py-2 pr-3 text-right font-medium">誤差</th>
-            <th className="w-8" />
-          </tr>
-        </thead>
-        <tbody className="tabular font-mono">
-          {runs.map((r, i) => {
-            const e = evaluateRun(r);
-            return (
-              <tr key={r.id} className="border-b border-line last:border-0">
-                <td className="py-2 pr-3 font-sans text-muted">{i + 1}</td>
-                <td className="py-2 pr-3 font-sans text-fg">{r.method === 'distance' ? '距離' : '輪速'}</td>
-                <td className="py-2 pr-3 text-right text-fg">{r.radarM.toFixed(1)} m</td>
-                <td className="py-2 pr-3 text-right text-fg">{r.referenceM.toFixed(1)} m</td>
-                <td className="py-2 pr-3 text-right text-fg">{formatPercent(e?.errorPct ?? null, 2)}</td>
-                <td className="py-1 text-right">
-                  <IconButton icon={TrashIcon} label={`刪除第 ${i + 1} 趟`} onClick={() => calibrationStore.getState().removeRun(r.id)} />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="[&>*+*]:border-t [&>*+*]:border-line">
+      {runs.map((r, i) => {
+        const e = evaluateRun(r);
+        return (
+          <div key={r.id} className="flex items-center gap-3 py-2.5 pl-1">
+            <span className="num flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2 text-footnote font-semibold text-muted">{i + 1}</span>
+            <div className="min-w-0 flex-1">
+              <p className="num text-subhead text-ink">
+                雷達 {r.radarM.toFixed(1)} m · 參考 {r.referenceM.toFixed(1)} m
+              </p>
+              <p className="text-caption text-muted">
+                {r.method === 'distance' ? '已知距離' : '輪速感測器'} · 誤差 <span className="num">{formatPercent(e?.errorPct ?? null, 2)}</span>
+              </p>
+            </div>
+            <IconButton icon={TrashIcon} label={`刪除第 ${i + 1} 趟`} onClick={() => calibrationStore.getState().removeRun(r.id)} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -154,6 +139,7 @@ function RunsTable() {
 export function CalibrationPanel() {
   const [method, setMethod] = useState<CalibrationMethod>('distance');
   const [confirm, setConfirm] = useState<number | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [manual, setManual] = useState<number | null>(null);
   const cal = useCalibration(useShallow((c) => ({ busy: c.session !== null || c.pending !== null, combined: c.combined, lastApplied: c.lastApplied, runs: c.runs.length })));
   const r = useRadar(
@@ -176,98 +162,114 @@ export function CalibrationPanel() {
   const manualValue = manual ?? r.calibration ?? 1;
 
   return (
-    <Panel
-      title="校正係數"
-      description="CAL 讓雷達量到的距離等於真實距離：CAL新 = CAL舊 × 真實 ÷ 雷達"
-      actions={
-        <span className="tabular rounded-md border border-line bg-sunken px-2.5 py-1 font-mono text-value text-fg" title="目前裝置上的校正係數">
-          {r.calibration === null ? '—' : r.calibration.toFixed(4)}
-        </span>
-      }
-    >
-      {cal.lastApplied && (
-        <p className="mb-4 text-label text-muted">
-          上次套用：{formatDateTime(cal.lastApplied.at)}，{cal.lastApplied.from.toFixed(4)} → {cal.lastApplied.to.toFixed(4)}（{cal.lastApplied.runs} 趟）
-        </p>
-      )}
-
-      {!cal.busy && (
-        <>
-          <Segmented
-            label="校正方式"
-            value={method}
-            onChange={setMethod}
-            options={[
-              { value: 'distance', label: '已知距離' },
-              { value: 'wheel', label: '輪速感測器' },
-            ]}
-          />
-          <ol className="mt-4 list-decimal space-y-1.5 pl-5 text-body text-muted marker:text-subtle">
-            {STEPS[method].map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
-          {method === 'wheel' && !r.hasWheel && (
-            <div className="mt-3">
-              <Notice tone="warn" title="沒有偵測到輪速感測器">
-                輪子轉動後 ESP32 才會開始回報輪速；確認 3144 霍爾開關接在 GPIO27、磁鐵經過時距離 5 mm 內。
-              </Notice>
-            </div>
-          )}
-          <div className="mt-4 flex justify-end">
-            <Button variant="primary" icon={PlayIcon} disabled={!r.connected || (method === 'wheel' && !r.hasWheel)} onClick={start}>
-              開始一趟
-            </Button>
-          </div>
-        </>
-      )}
-      <SessionView />
-
-      <div className="mt-5 border-t border-line pt-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-heading font-semibold text-fg">校正結果</h3>
-          {cal.runs > 0 && (
-            <Button size="sm" variant="ghost" onClick={() => calibrationStore.getState().clearRuns()}>
-              清除
-            </Button>
-          )}
-        </div>
-        <RunsTable />
-        {cal.combined && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-sunken px-4 py-3">
-            <div>
-              <div className="text-label text-muted">
-                建議係數（{cal.combined.runs} 趟依距離加權
-                {cal.combined.spreadPct !== null && `，各趟離散 ${cal.combined.spreadPct.toFixed(2)}%`}）
+    <Section id="calibration" title="校正係數" description="CAL 讓雷達量到的距離等於真實距離：CAL新 = CAL舊 × 真實 ÷ 雷達">
+      <Card className="p-4">
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-surface-2 px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-footnote text-muted">裝置上的校正係數</div>
+            {cal.lastApplied ? (
+              <div className="truncate text-caption text-muted">
+                {formatDateTime(cal.lastApplied.at)} 套用（{cal.lastApplied.runs} 趟）
               </div>
-              <div className="tabular font-mono text-stat font-semibold text-fg">{roundCalibration(cal.combined.calibration).toFixed(4)}</div>
-            </div>
-            <Button variant="primary" disabled={!r.connected} onClick={() => cal.combined && apply(cal.combined.calibration)}>
-              套用到裝置
+            ) : (
+              <div className="text-caption text-muted">{r.calibration === 1 ? '出廠值，尚未校正' : '　'}</div>
+            )}
+          </div>
+          <span className={cx('num text-[1.75rem] font-semibold tracking-tight', r.calibration === 1 ? 'text-warn' : 'text-ink')}>{r.calibration === null ? '—' : r.calibration.toFixed(4)}</span>
+        </div>
+
+        {!cal.busy && (
+          <div className="mt-4">
+            <Segmented
+              label="校正方式"
+              block
+              value={method}
+              onChange={setMethod}
+              options={[
+                { value: 'distance', label: '已知距離' },
+                { value: 'wheel', label: '輪速感測器' },
+              ]}
+            />
+            <ol className="mt-4 flex flex-col gap-2.5">
+              {STEPS[method].map((step, i) => (
+                <li key={step} className="flex gap-3 text-subhead text-ink">
+                  <span className="num flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2 text-caption font-bold text-muted">{i + 1}</span>
+                  <span className="min-w-0">{step}</span>
+                </li>
+              ))}
+            </ol>
+            {method === 'wheel' && !r.hasWheel && (
+              <div className="mt-3">
+                <Notice tone="warn" flat title="沒有偵測到輪速感測器">
+                  輪子轉動後 ESP32 才會開始回報輪速；確認 3144 霍爾開關接在 GPIO27、磁鐵經過時距離 5 mm 內。
+                </Notice>
+              </div>
+            )}
+            <Button className="mt-4" variant="primary" size="lg" block icon={PlayIcon} disabled={!r.connected || (method === 'wheel' && !r.hasWheel)} onClick={start}>
+              {r.connected ? '開始一趟' : '連線後才能校正'}
             </Button>
           </div>
         )}
-      </div>
+        {cal.busy && (
+          <div className="mt-4">
+            <SessionView />
+          </div>
+        )}
 
-      <details className="group mt-4 border-t border-line pt-3">
-        <summary className="cursor-pointer text-label text-muted select-none hover:text-fg">手動輸入校正係數</summary>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <NumberInput label="校正係數" value={manualValue} onChange={setManual} min={LIMITS.calibration.min} max={LIMITS.calibration.max} step={0.001} decimals={4} width="w-24" />
-          <Button disabled={!r.connected || !inRange(manualValue, LIMITS.calibration.min, LIMITS.calibration.max)} onClick={() => apply(manualValue)}>
-            套用
-          </Button>
+        <div className="mt-5 border-t border-line pt-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-headline font-semibold text-ink">校正結果</h3>
+            {cal.runs > 0 && (
+              <Button size="sm" variant="plain" onClick={() => setConfirmClear(true)}>
+                清除
+              </Button>
+            )}
+          </div>
+          <RunsList />
+          {cal.combined && (
+            <div className="mt-3 rounded-2xl bg-tint-soft p-4">
+              <div className="text-footnote text-muted">
+                建議係數（{cal.combined.runs} 趟依距離加權
+                {cal.combined.spreadPct !== null && `，各趟離散 ${cal.combined.spreadPct.toFixed(2)}%`}）
+              </div>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+                <span className="num text-[1.75rem] font-semibold tracking-tight text-ink">{roundCalibration(cal.combined.calibration).toFixed(4)}</span>
+                <Button variant="primary" disabled={!r.connected} onClick={() => cal.combined && apply(cal.combined.calibration)}>
+                  套用到裝置
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
-      </details>
 
-      {confirm !== null && r.calibration !== null && (
-        <ConfirmDialog
-          title="校正係數變化很大"
-          message={`新係數 ${confirm.toFixed(4)} 與目前 ${r.calibration.toFixed(4)} 相差超過 40%。通常代表安裝角度、雷達朝向或參考距離有誤；確定要套用嗎？`}
-          confirmLabel="仍要套用"
-          onConfirm={() => void actions.applyCalibration(confirm)}
-          onClose={() => setConfirm(null)}
-        />
-      )}
-    </Panel>
+        <details className="group mt-4 border-t border-line pt-3">
+          <summary className="flex min-h-11 cursor-pointer items-center text-subhead text-muted select-none hover:text-ink">手動輸入校正係數</summary>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Stepper label="校正係數" value={manualValue} onChange={setManual} min={LIMITS.calibration.min} max={LIMITS.calibration.max} step={0.001} decimals={4} width="w-20" />
+            <Button disabled={!r.connected || !inRange(manualValue, LIMITS.calibration.min, LIMITS.calibration.max)} onClick={() => apply(manualValue)}>
+              套用
+            </Button>
+          </div>
+        </details>
+      </Card>
+
+      <ConfirmSheet
+        open={confirm !== null && r.calibration !== null}
+        title="校正係數變化很大"
+        message={confirm !== null && r.calibration !== null ? `新係數 ${confirm.toFixed(4)} 與目前 ${r.calibration.toFixed(4)} 相差超過 40%。通常代表安裝角度、雷達朝向或參考距離有誤；確定要套用嗎？` : ''}
+        confirmLabel="仍要套用"
+        onConfirm={() => confirm !== null && void actions.applyCalibration(confirm)}
+        onClose={() => setConfirm(null)}
+      />
+      <ConfirmSheet
+        open={confirmClear}
+        title="清除校正結果"
+        message="這幾趟的結果都會刪除（裝置上的校正係數不變）。"
+        confirmLabel="清除"
+        destructive
+        onConfirm={() => calibrationStore.getState().clearRuns()}
+        onClose={() => setConfirmClear(false)}
+      />
+    </Section>
   );
 }
