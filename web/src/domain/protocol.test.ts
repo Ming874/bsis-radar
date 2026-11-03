@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CONFIG, buildCommand, diffConfig, firmwareMajor, groundWindow, parseLine, unambiguousGroundMps } from './protocol';
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_REAR_CONFIG,
+  buildCommand,
+  diffConfig,
+  diffRearConfig,
+  firmwareMajor,
+  groundWindow,
+  parseLine,
+  rearDetectRange,
+  unambiguousGroundMps,
+} from './protocol';
 
 describe('parseLine：遙測', () => {
   it('追蹤中的一行（含輪速）', () => {
@@ -88,9 +99,23 @@ describe('parseLine：設定與回覆', () => {
         radialLimitMps: 3.2,
         gateMinM: 0.62,
         gateMaxM: 2.15,
+        rear: null, // 3.0 的韌體沒有後方雷達功能
         firmware: '3.0.0',
       },
     });
+  });
+
+  it('CFG（3.1：含後方來車參數）', () => {
+    const p = parseLine(
+      'CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=3.28 RMIN=0.62 RMAX=2.15 RANGE=15 RSPD=5 TTC=2.5 RSNR=4 RDET=25 FW=3.1.0',
+    );
+    expect(p.kind).toBe('config');
+    if (p.kind !== 'config') return;
+    expect(p.config.rear).toEqual({ rangeM: 15, minSpeedKmh: 5, ttcS: 2.5, snr: 4, detectRangeM: 25 });
+    expect(p.config.firmware).toBe('3.1.0');
+    // 缺 RDET 時由 RANGE 算
+    const q = parseLine('CFG ANGLE=45 HEIGHT=0.7 DIR=1 CAL=1 RANGE=40 FW=3.1.1');
+    expect(q.kind === 'config' && q.config.rear?.detectRangeM).toBe(50);
   });
 
   it('舊版（後方來車偵測）韌體的 CFG', () => {
@@ -115,6 +140,53 @@ describe('parseLine：設定與回覆', () => {
   });
 });
 
+describe('parseLine：後方來車（REAR）', () => {
+  it('有主要來車、兩個目標', () => {
+    const p = parseLine('REAR ON=1 RO=1 LV=1 D=12.4 V=4.17 TTC=3.0 HOLD=0 N=2 CNT=3 FN=812 X=-3/12/15,6/31/-40');
+    expect(p).toEqual({
+      kind: 'rear',
+      rear: {
+        online: true,
+        receiveOnly: true,
+        level: 'caution',
+        distanceM: 12.4,
+        closingMps: 4.17,
+        ttcS: 3,
+        holding: false,
+        targets: [
+          { angleDeg: -3, distanceM: 12, speedKmh: 15 },
+          { angleDeg: 6, distanceM: 31, speedKmh: -40 },
+        ],
+        alerts: 3,
+        frame: 812,
+      },
+    });
+  });
+
+  it('沒有主要來車、保持中；離線', () => {
+    const p = parseLine('REAR ON=1 RO=0 LV=2 D=-1.0 V=0.00 TTC=-1.0 HOLD=1 N=0 CNT=4 FN=900');
+    expect(p.kind === 'rear' && p.rear).toMatchObject({ level: 'danger', holding: true, distanceM: null, closingMps: null, ttcS: null, targets: [] });
+    const off = parseLine('REAR ON=0');
+    expect(off.kind === 'rear' && off.rear).toMatchObject({ online: false, level: 'safe', distanceM: null, targets: [] });
+  });
+
+  it('格式不對的目標略過；缺 ON 不算', () => {
+    const p = parseLine('REAR ON=1 LV=0 D=-1 X=1/2/3,abc,4/-5/6,7/8/9');
+    expect(p.kind === 'rear' && p.rear.targets).toEqual([
+      { angleDeg: 1, distanceM: 2, speedKmh: 3 },
+      { angleDeg: 7, distanceM: 8, speedKmh: 9 },
+    ]);
+    expect(parseLine('REAR LV=2').kind).toBe('unknown');
+    expect(parseLine('REAR ON=1 ON=1').kind).toBe('unknown'); // 兩行黏在一起
+  });
+
+  it('偵測距離 = RANGE + 10（10～100）', () => {
+    expect(rearDetectRange(15)).toBe(25);
+    expect(rearDetectRange(50)).toBe(60);
+    expect(rearDetectRange(95)).toBe(100);
+  });
+});
+
 describe('buildCommand', () => {
   it('產生指令文字', () => {
     expect(buildCommand({ type: 'get' })).toBe('GET');
@@ -128,6 +200,10 @@ describe('buildCommand', () => {
     expect(buildCommand({ type: 'wheel', mm: 2096 })).toBe('WHEEL 2096');
     expect(buildCommand({ type: 'radialLimit', mps: 3.28 })).toBe('VMAX 3.28');
     expect(buildCommand({ type: 'radialLimit', mps: 10 })).toBe('VMAX 10');
+    expect(buildCommand({ type: 'rearRange', m: 20 })).toBe('RANGE 20');
+    expect(buildCommand({ type: 'rearMinSpeed', kmh: 8 })).toBe('RSPD 8');
+    expect(buildCommand({ type: 'rearTtc', s: 2.54 })).toBe('TTC 2.5');
+    expect(buildCommand({ type: 'rearSnr', value: 6 })).toBe('RSNR 6');
     expect(buildCommand({ type: 'defaults' })).toBe('DEFAULTS');
     expect(buildCommand({ type: 'reboot' })).toBe('REBOOT');
   });
@@ -139,6 +215,21 @@ describe('buildCommand', () => {
     expect(() => buildCommand({ type: 'radarThreshold', value: 5.5 })).toThrow(/整數/);
     expect(() => buildCommand({ type: 'wheel', mm: Number.NaN })).toThrow(RangeError);
     expect(() => buildCommand({ type: 'radialLimit', mps: 1 })).toThrow(/測速上限/);
+    expect(() => buildCommand({ type: 'rearRange', m: 4 })).toThrow(/警示距離/);
+    expect(() => buildCommand({ type: 'rearRange', m: 15.5 })).toThrow(/整數/);
+    expect(() => buildCommand({ type: 'rearTtc', s: 7 })).toThrow(/到達時間/);
+    expect(() => buildCommand({ type: 'rearSnr', value: 9 })).toThrow(RangeError);
+  });
+});
+
+describe('diffRearConfig', () => {
+  it('只送有變的後方參數', () => {
+    expect(diffRearConfig(DEFAULT_REAR_CONFIG, { ...DEFAULT_REAR_CONFIG })).toEqual([]);
+    expect(diffRearConfig(DEFAULT_REAR_CONFIG, { ...DEFAULT_REAR_CONFIG, ttcS: 2.52 })).toEqual([]);
+    expect(diffRearConfig(DEFAULT_REAR_CONFIG, { ...DEFAULT_REAR_CONFIG, rangeM: 20, snr: 5 })).toEqual([
+      { type: 'rearRange', m: 20 },
+      { type: 'rearSnr', value: 5 },
+    ]);
   });
 });
 

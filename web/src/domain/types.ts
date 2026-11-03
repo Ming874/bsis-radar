@@ -1,6 +1,6 @@
 /**
  * 【領域層】資料型別。純 TypeScript，不依賴 React 或瀏覽器 API。
- * 欄位與韌體 3.0 的 src/comm/Telemetry.h 對應，定義見 docs/PROTOCOL.md。
+ * 欄位與韌體 3.1 的 src/comm/Telemetry.h 對應，定義見 docs/PROTOCOL.md。
  */
 
 /** 估計器狀態（韌體 ST 欄位） */
@@ -44,6 +44,42 @@ export interface Telemetry {
   receivedAt: number; // 收到的時間（ms），由網頁填入
 }
 
+/** 後方來車警示等級（韌體 REAR 行的 LV） */
+export type RearLevel = 'safe' | 'caution' | 'danger';
+
+/** 後方雷達（HLK-LD2451）一個資料框裡的目標 */
+export interface RearTarget {
+  angleDeg: number; // 0 = 正後方（左右哪邊是正值要看安裝，網頁可對調）
+  distanceM: number;
+  speedKmh: number; // 正 = 靠近、負 = 遠離（相對腳踏車的徑向速度）
+}
+
+/** ESP32 送來的一行後方來車狀態（REAR 行）：有目標或警示中每 0.1 秒、平常每 0.5 秒、離線每 1 秒 */
+export interface RearTelemetry {
+  online: boolean; // ON
+  receiveOnly: boolean; // RO：指令沒有回覆（只接了 LD2451 TX），偵測設定沒寫進雷達
+  level: RearLevel; // LV
+  distanceM: number | null; // D：主要來車的距離（濾波後）
+  closingMps: number | null; // V：接近速度
+  ttcS: number | null; // TTC：到達時間
+  holding: boolean; // HOLD：警示保持中（來車已不在視野：正在旁邊超車或停下來）
+  targets: RearTarget[]; // X
+  alerts: number; // CNT：ESP32 開機後的警示次數
+  frame: number; // FN：後方雷達資料框序號
+  receivedAt: number; // 收到的時間（ms），由網頁填入
+}
+
+/** 後方來車參數（CFG 的 RANGE、RSPD、TTC、RSNR、RDET） */
+export interface RearConfig {
+  rangeM: number; // RANGE：警示距離
+  minSpeedKmh: number; // RSPD：最低接近速度
+  ttcS: number; // TTC：危險的到達時間
+  snr: number; // RSNR：LD2451 訊噪比門檻
+  detectRangeM: number; // RDET：寫進 LD2451 的偵測距離（唯讀，RANGE + 10）
+}
+
+export type EditableRearConfig = Omit<RearConfig, 'detectRangeM'>;
+
 /** 裝置參數（韌體 CFG 回覆） */
 export interface DeviceConfig {
   angleDeg: number; // ANGLE：視軸俯角
@@ -56,15 +92,18 @@ export interface DeviceConfig {
   radialLimitMps: number; // VMAX：C4001 徑向測速上限
   gateMinM: number; // RMIN：地面距離窗口（唯讀）
   gateMaxM: number; // RMAX
+  /** 後方來車參數；韌體 3.0 沒有後方雷達功能時 null */
+  rear: RearConfig | null;
   firmware: string; // FW
 }
 
-/** 可以修改的參數（不含唯讀的窗口與版本） */
-export type EditableConfig = Omit<DeviceConfig, 'gateMinM' | 'gateMaxM' | 'firmware'>;
+/** 可以修改的對地測速參數（不含唯讀的窗口與版本；後方來車參數另外處理） */
+export type EditableConfig = Omit<DeviceConfig, 'gateMinM' | 'gateMaxM' | 'firmware' | 'rear'>;
 
 export type ParsedLine =
   | { kind: 'telemetry'; telemetry: Omit<Telemetry, 'receivedAt'> }
   | { kind: 'config'; config: DeviceConfig }
+  | { kind: 'rear'; rear: Omit<RearTelemetry, 'receivedAt'> }
   | { kind: 'legacyConfig'; firmware: string } // 3.0 以前（後方來車偵測版）的韌體
   | { kind: 'ack'; ok: boolean; message: string }
   | { kind: 'unknown'; text: string };
@@ -81,7 +120,11 @@ export type DeviceCommand =
   | { type: 'calibration'; factor: number }
   | { type: 'radarThreshold'; value: number }
   | { type: 'wheel'; mm: number }
-  | { type: 'radialLimit'; mps: number };
+  | { type: 'radialLimit'; mps: number }
+  | { type: 'rearRange'; m: number }
+  | { type: 'rearMinSpeed'; kmh: number }
+  | { type: 'rearTtc'; s: number }
+  | { type: 'rearSnr'; value: number };
 
 /** 速度圖的一個點 */
 export interface SpeedPoint {

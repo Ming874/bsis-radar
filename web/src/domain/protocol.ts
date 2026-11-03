@@ -1,13 +1,25 @@
 /**
- * 【領域層】ESP32 ⇄ 網頁的文字協定（與韌體 3.0 的 src/comm/Telemetry、CommandParser 對應，見 docs/PROTOCOL.md）。
+ * 【領域層】ESP32 ⇄ 網頁的文字協定（與韌體 3.1 的 src/comm/Telemetry、CommandParser 對應，見 docs/PROTOCOL.md）。
  *
  * ESP32 → 網頁（每行以 '\n' 結尾）：
  *   R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=0 DR=1234.5 W=5.51 DW=1240.2 T=812
- *   CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=3.28 RMIN=0.62 RMAX=2.15 FW=3.0.0
+ *   REAR ON=1 RO=0 LV=1 D=12.4 V=4.17 TTC=3.0 HOLD=0 N=2 CNT=3 FN=812 X=-3/12/15,6/31/-40
+ *   CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=3.28 RMIN=0.62 RMAX=2.15 RANGE=15 RSPD=5 TTC=2.5 RSNR=4 RDET=25 FW=3.1.0
  *   OK saved / ERR <原因>
- * 網頁 → ESP32：GET、ANGLE、HEIGHT、DIR、MODEL、CAL、RTHR、WHEEL、VMAX、DEFAULTS、REBOOT
+ * 網頁 → ESP32：GET、ANGLE、HEIGHT、DIR、MODEL、CAL、RTHR、WHEEL、VMAX、RANGE、RSPD、TTC、RSNR、DEFAULTS、REBOOT
  */
-import type { DeviceCommand, EditableConfig, FrameVerdict, ParsedLine, SpeedModel, SpeedState } from './types';
+import type {
+  DeviceCommand,
+  EditableConfig,
+  EditableRearConfig,
+  FrameVerdict,
+  ParsedLine,
+  RearConfig,
+  RearLevel,
+  RearTarget,
+  SpeedModel,
+  SpeedState,
+} from './types';
 
 /** 各參數允許範圍（與韌體 SpeedConfig.h 的 limits 相同） */
 export const LIMITS = {
@@ -18,6 +30,27 @@ export const LIMITS = {
   wheelMm: { min: 1000, max: 3000 },
   radialLimitMps: { min: 2, max: 20 },
 } as const;
+
+/** 後方來車參數的允許範圍（與韌體 SpeedConfig.h 的 limits 相同） */
+export const REAR_LIMITS = {
+  rangeM: { min: 5, max: 50 },
+  minSpeedKmh: { min: 1, max: 30 },
+  ttcS: { min: 1, max: 6 },
+  snr: { min: 3, max: 8 },
+} as const;
+
+/** 韌體預設值（RearConfig::defaults） */
+export const DEFAULT_REAR_CONFIG: EditableRearConfig = { rangeM: 15, minSpeedKmh: 5, ttcS: 2.5, snr: 4 };
+
+/** 寫進 LD2451 的偵測距離（與韌體 RearConfig::detectRangeM 相同）：車子進入警示距離前就先確認 */
+export function rearDetectRange(rangeM: number): number {
+  return Math.min(100, Math.max(10, rangeM + 10));
+}
+
+/** 很近就一定算危險（韌體 rear_tuning::kDangerDistM） */
+export const REAR_DANGER_DIST_M = 5;
+/** 警示保持時間（韌體 rear_tuning::kHoldMs） */
+export const REAR_HOLD_MS = 1500;
 
 /** 韌體預設值（SpeedConfig::defaults） */
 export const DEFAULT_CONFIG: EditableConfig = {
@@ -48,6 +81,7 @@ const VERDICTS: readonly FrameVerdict[] = [
   'unfolded',
 ];
 const MODELS: readonly SpeedModel[] = ['fixedAngle', 'rangeGeometry'];
+const REAR_LEVELS: readonly RearLevel[] = ['safe', 'caution', 'danger'];
 
 /**
  * 把 "A=1 B=2" 拆成 Map（鍵一律轉大寫，順序不拘，格式不對的片段略過）。
@@ -112,6 +146,55 @@ function parseTelemetry(text: string): ParsedLine {
   };
 }
 
+/** "-3/12/15,6/31/-40" → 目標列表（格式不對的片段略過） */
+function parseRearTargets(raw: string | undefined): RearTarget[] {
+  if (!raw) return [];
+  const out: RearTarget[] = [];
+  for (const part of raw.split(',')) {
+    const [a, d, v] = part.split('/').map(Number);
+    if ([a, d, v].every((x) => x !== undefined && Number.isFinite(x)) && (d as number) >= 0) {
+      out.push({ angleDeg: a as number, distanceM: d as number, speedKmh: v as number });
+    }
+    if (out.length === 5) break;
+  }
+  return out;
+}
+
+function parseRear(text: string): ParsedLine {
+  const p = parsePairs(text.slice(4));
+  if (!p || !p.has('ON')) return { kind: 'unknown', text };
+  const online = num(p, 'ON') === 1;
+  const distanceM = online ? nonNegative(num(p, 'D')) : null;
+  return {
+    kind: 'rear',
+    rear: {
+      online,
+      receiveOnly: online && num(p, 'RO') === 1,
+      level: online ? pick(REAR_LEVELS, num(p, 'LV'), 'safe') : 'safe',
+      distanceM,
+      closingMps: distanceM === null ? null : Math.max(0, num(p, 'V') ?? 0),
+      ttcS: distanceM === null ? null : nonNegative(num(p, 'TTC')),
+      holding: online && num(p, 'HOLD') === 1,
+      targets: online ? parseRearTargets(p.get('X')) : [],
+      alerts: Math.max(0, num(p, 'CNT') ?? 0),
+      frame: Math.max(0, num(p, 'FN') ?? 0),
+    },
+  };
+}
+
+function parseRearConfig(p: Map<string, string>): RearConfig | null {
+  const rangeM = num(p, 'RANGE');
+  if (rangeM === undefined) return null; // 3.0 的韌體沒有後方雷達功能
+  const d = DEFAULT_REAR_CONFIG;
+  return {
+    rangeM,
+    minSpeedKmh: num(p, 'RSPD') ?? d.minSpeedKmh,
+    ttcS: num(p, 'TTC') ?? d.ttcS,
+    snr: num(p, 'RSNR') ?? d.snr,
+    detectRangeM: num(p, 'RDET') ?? rearDetectRange(rangeM),
+  };
+}
+
 function parseConfig(text: string): ParsedLine {
   const p = parsePairs(text.slice(3));
   if (!p) return { kind: 'unknown', text };
@@ -141,6 +224,7 @@ function parseConfig(text: string): ParsedLine {
       radialLimitMps: num(p, 'VMAX') ?? d.radialLimitMps,
       gateMinM: num(p, 'RMIN') ?? 0,
       gateMaxM: num(p, 'RMAX') ?? 0,
+      rear: parseRearConfig(p),
       firmware,
     },
   };
@@ -153,6 +237,7 @@ export function parseLine(line: string): ParsedLine {
 
   const head = text.split(/\s+/, 1)[0]?.toUpperCase() ?? '';
   if (head === 'CFG') return parseConfig(text);
+  if (head === 'REAR') return parseRear(text);
   if (head === 'OK' || head === 'ERR') {
     return { kind: 'ack', ok: head === 'OK', message: text.slice(head.length).trim() };
   }
@@ -213,7 +298,32 @@ export function buildCommand(cmd: DeviceCommand): string {
     case 'radialLimit':
       assertRange(cmd.mps, LIMITS.radialLimitMps, '雷達測速上限');
       return `VMAX ${compact(cmd.mps, 2)}`;
+    case 'rearRange':
+      assertRange(cmd.m, REAR_LIMITS.rangeM, '後方警示距離');
+      assertInteger(cmd.m, '後方警示距離');
+      return `RANGE ${cmd.m}`;
+    case 'rearMinSpeed':
+      assertRange(cmd.kmh, REAR_LIMITS.minSpeedKmh, '最低接近速度');
+      assertInteger(cmd.kmh, '最低接近速度');
+      return `RSPD ${cmd.kmh}`;
+    case 'rearTtc':
+      assertRange(cmd.s, REAR_LIMITS.ttcS, '危險到達時間');
+      return `TTC ${compact(cmd.s, 1)}`;
+    case 'rearSnr':
+      assertRange(cmd.value, REAR_LIMITS.snr, '後方雷達訊噪比門檻');
+      assertInteger(cmd.value, '後方雷達訊噪比門檻');
+      return `RSNR ${cmd.value}`;
   }
+}
+
+/** 比較兩份後方來車參數，回傳需要送出的指令 */
+export function diffRearConfig(current: EditableRearConfig, next: EditableRearConfig): DeviceCommand[] {
+  const cmds: DeviceCommand[] = [];
+  if (current.rangeM !== next.rangeM) cmds.push({ type: 'rearRange', m: next.rangeM });
+  if (current.minSpeedKmh !== next.minSpeedKmh) cmds.push({ type: 'rearMinSpeed', kmh: next.minSpeedKmh });
+  if (current.ttcS.toFixed(1) !== next.ttcS.toFixed(1)) cmds.push({ type: 'rearTtc', s: next.ttcS });
+  if (current.snr !== next.snr) cmds.push({ type: 'rearSnr', value: next.snr });
+  return cmds;
 }
 
 /** 比較兩份設定，回傳需要送出的指令（只送有變的；數值以送出的精度比較） */

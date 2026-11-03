@@ -4,6 +4,7 @@ import { Emitter, type TransportState } from '../infrastructure/transport/RadarT
 import { createCalibrationStore } from './calibrationStore';
 import { ALERT_COOLDOWN_MS, createOverspeedStore } from './overspeedStore';
 import { createRadarStore, type BluetoothTransport } from './radarStore';
+import { createRearAlertStore } from './rearAlertStore';
 import { createTripStore } from './tripStore';
 
 class FakeTransport implements BluetoothTransport {
@@ -121,6 +122,62 @@ describe('radarStore', () => {
     now += 2000;
     vi.advanceTimersByTime(300);
     expect(store.getState().stale).toBe(true);
+  });
+
+  it('後方來車：REAR 行更新狀態（不進主控台）、算資料框頻率、超過 2.5 秒中斷；CSV 記下當時的後方狀態', async () => {
+    const { store, transport, downloads } = setup();
+    await store.getState().connectBluetooth();
+    transport.emit(CFG.replace('FW=3.0.0', 'RANGE=15 RSPD=5 TTC=2.5 RSNR=4 RDET=25 FW=3.1.0'));
+    expect(store.getState().config?.rear?.rangeM).toBe(15);
+    const consoleBefore = store.getState().console.length;
+    store.getState().startRecording();
+    for (let k = 0; k <= 20; k++) {
+      now += 100;
+      transport.emit(`REAR ON=1 RO=0 LV=1 D=${(14 - k * 0.2).toFixed(1)} V=5.56 TTC=2.4 HOLD=0 N=1 CNT=1 FN=${100 + k} X=-2/${Math.round(14 - k * 0.2)}/20`);
+    }
+    transport.emit(line(1, 0));
+    const s = store.getState();
+    expect(s.rear).toMatchObject({ online: true, level: 'caution', alerts: 1, frame: 120 });
+    expect(s.rearFrameRateHz).toBeCloseTo(10, 0);
+    expect(s.console.length).toBe(consoleBefore);
+    store.getState().stopRecording();
+    const csv = downloads[0]?.content.split('\n') ?? [];
+    expect(csv[0]).toContain('rear_level,rear_distance_m');
+    expect(csv[1]).toContain(',1,caution,10,5.56,2.4,-2/10/20');
+
+    now += 3000;
+    vi.advanceTimersByTime(300);
+    expect(store.getState().rearStale).toBe(true);
+    transport.emit('REAR ON=0');
+    expect(store.getState()).toMatchObject({ rearStale: false, rearFrameRateHz: null });
+    expect(store.getState().rear?.online).toBe(false);
+  });
+
+  it('套用後方參數只送有變的指令', async () => {
+    const { store, transport } = setup();
+    await store.getState().connectBluetooth();
+    transport.emit(CFG.replace('FW=3.0.0', 'RANGE=15 RSPD=5 TTC=2.5 RSNR=4 RDET=25 FW=3.1.0'));
+    transport.sent.length = 0;
+    expect(await store.getState().applyRearConfig({ rangeM: 20, minSpeedKmh: 5, ttcS: 3, snr: 4 })).toBe(true);
+    expect(transport.sent).toEqual(['RANGE 20', 'TTC 3']);
+  });
+});
+
+describe('rearAlertStore', () => {
+  it('等級上升時提示；危險持續每 1.5 秒；reset 後重新提示', () => {
+    const cues: string[] = [];
+    const store = createRearAlertStore({ cue: (c) => cues.push(c) });
+    const rear = (at: number, level: 'safe' | 'caution' | 'danger') =>
+      store.getState().onRear({ online: true, receiveOnly: false, level, distanceM: 10, closingMps: 5, ttcS: 2, holding: false, targets: [], alerts: 1, frame: 1, receivedAt: at });
+    rear(0, 'caution');
+    rear(100, 'danger');
+    rear(200, 'danger');
+    rear(1700, 'danger');
+    expect(cues).toEqual(['caution', 'danger', 'danger']);
+    expect(store.getState().lastCue).toEqual({ cue: 'danger', at: 1700 });
+    store.getState().reset();
+    rear(1800, 'danger');
+    expect(cues).toHaveLength(4);
   });
 });
 

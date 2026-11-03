@@ -5,8 +5,9 @@
  * 只依賴領域層與「介面」，具體實作由 container.ts 注入，所以可以替換或測試。
  */
 import { createStore } from 'zustand/vanilla';
-import { buildCommand, diffConfig, parseLine } from '../domain/protocol';
-import type { DeviceCommand, DeviceConfig, EditableConfig, FrameSample, SpeedPoint, Telemetry } from '../domain/types';
+import { buildCommand, diffConfig, diffRearConfig, parseLine } from '../domain/protocol';
+import { REAR_STALE_MS } from '../domain/rear';
+import type { DeviceCommand, DeviceConfig, EditableConfig, EditableRearConfig, FrameSample, RearTelemetry, SpeedPoint, Telemetry } from '../domain/types';
 import { fileStamp } from '../domain/units';
 import type { CsvRecorder } from '../infrastructure/storage/csv';
 import type { RadarTransport, TransportState } from '../infrastructure/transport/RadarTransport';
@@ -29,6 +30,9 @@ export interface RadarState {
   everConnected: boolean; // 這次連線曾經成功過（用來判斷「意外斷線」）
   telemetry: Telemetry | null;
   stale: boolean; // 已連線但超過 1.5 s 沒收到資料
+  rear: RearTelemetry | null; // 後方來車（REAR 行）；韌體 3.0 或還沒收到時 null
+  rearStale: boolean; // 收過 REAR 行，但超過 2.5 s 沒有新的
+  rearFrameRateHz: number | null; // 後方雷達資料框頻率（最近 3 秒）
   config: DeviceConfig | null;
   legacyFirmware: string | null; // 連上的是 3.0 以前（後方來車偵測版）的韌體
   speedHistory: SpeedPoint[];
@@ -48,6 +52,7 @@ export interface RadarActions {
   sendCommand: (cmd: DeviceCommand) => Promise<boolean>;
   sendRaw: (text: string) => Promise<boolean>;
   applyConfig: (next: EditableConfig) => Promise<boolean>;
+  applyRearConfig: (next: EditableRearConfig) => Promise<boolean>;
   startRecording: () => void;
   stopRecording: () => void;
   clearConsole: () => void;
@@ -72,6 +77,9 @@ const INITIAL: RadarState = {
   everConnected: false,
   telemetry: null,
   stale: false,
+  rear: null,
+  rearStale: false,
+  rearFrameRateHz: null,
   config: null,
   legacyFirmware: null,
   speedHistory: [],
@@ -100,6 +108,7 @@ function measureFrameRate(frames: FrameSample[], now: number): number | null {
 
 export function createRadarStore(deps: RadarStoreDeps) {
   let transport: RadarTransport | null = null;
+  let rearFrames: Array<{ t: number; frame: number }> = []; // 算後方雷達資料框頻率
   let unsubscribe: Array<() => void> = [];
   let connectedAt = 0;
   let consoleId = 0;
@@ -127,7 +136,7 @@ export function createRadarStore(deps: RadarStoreDeps) {
           ]
         : prev.frames;
       let recording = prev.recording;
-      if (recording.active && deps.recorder.append(t)) recording = { ...recording, rows: deps.recorder.rowCount };
+      if (recording.active && deps.recorder.append(t, prev.rear)) recording = { ...recording, rows: deps.recorder.rowCount };
       set({
         telemetry: t,
         stale: false,
@@ -138,12 +147,27 @@ export function createRadarStore(deps: RadarStoreDeps) {
       });
     };
 
+    const handleRear = (data: Omit<RearTelemetry, 'receivedAt'>) => {
+      const rear: RearTelemetry = { ...data, receivedAt: deps.now() };
+      // 資料框頻率：最近 3 秒的序號差 ÷ 時間（韌體重新開機時序號變小，重新計算）
+      const last = rearFrames[rearFrames.length - 1];
+      if (!rear.online || (last && rear.frame < last.frame)) rearFrames = [];
+      if (rear.online) rearFrames = [...rearFrames.filter((x) => x.t >= rear.receivedAt - 3000), { t: rear.receivedAt, frame: rear.frame }];
+      const first = rearFrames[0];
+      const span = first ? rear.receivedAt - first.t : 0;
+      const rate = first && span >= 1000 ? ((rear.frame - first.frame) * 1000) / span : null;
+      set({ rear, rearStale: false, rearFrameRateHz: rate });
+    };
+
     const handleLine = (line: string) => {
       const parsed = parseLine(line);
       switch (parsed.kind) {
         case 'telemetry':
           handleTelemetry(parsed.telemetry);
           return; // 遙測每秒 10 行，不放進主控台
+        case 'rear':
+          handleRear(parsed.rear);
+          return; // 每秒 2～10 行，不放進主控台
         case 'config':
           set({ config: parsed.config, legacyFirmware: null });
           break;
@@ -191,6 +215,9 @@ export function createRadarStore(deps: RadarStoreDeps) {
       set({
         everConnected: false,
         telemetry: null,
+        rear: null,
+        rearStale: false,
+        rearFrameRateHz: null,
         config: null,
         legacyFirmware: null,
         speedHistory: [],
@@ -275,6 +302,20 @@ export function createRadarStore(deps: RadarStoreDeps) {
         }
       },
 
+      applyRearConfig: async (next) => {
+        const current = get().config?.rear;
+        if (!current) return false;
+        set({ applying: true });
+        try {
+          for (const cmd of diffRearConfig(current, next)) {
+            if (!(await get().sendCommand(cmd))) return false;
+          }
+          return true;
+        } finally {
+          set({ applying: false });
+        }
+      },
+
       startRecording: () => {
         deps.recorder.clear();
         set({ recording: { active: true, startedAt: deps.now(), rows: 0 } });
@@ -300,6 +341,8 @@ export function createRadarStore(deps: RadarStoreDeps) {
     const last = s.telemetry?.receivedAt ?? connectedAt;
     const stale = deps.now() - last > STALE_AFTER_MS;
     if (stale !== s.stale) store.setState({ stale });
+    const rearStale = s.rear !== null && deps.now() - s.rear.receivedAt > REAR_STALE_MS;
+    if (rearStale !== s.rearStale) store.setState({ rearStale });
   }, 250);
 
   return store;

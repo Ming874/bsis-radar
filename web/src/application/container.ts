@@ -8,6 +8,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 import { buildBackup, isCalibrationRun, parseBackup, type LastApplied } from '../domain/backup';
 import { checkCalibration, roundCalibration } from '../domain/calibration';
 import { unambiguousGroundMps } from '../domain/protocol';
+import { rearSpeech } from '../domain/rear';
 import { isSavedTrip, type SavedTrip } from '../domain/trip';
 import { fileStamp, formatDistance, kmhToMps } from '../domain/units';
 import { AlertOutput } from '../infrastructure/alertOutput';
@@ -21,6 +22,7 @@ import { createCalibrationStore, type CalibrationState, type CalibrationStore } 
 import { BRAVE_BLUETOOTH_HELP, describeAck } from './messages';
 import { createOverspeedStore, type OverspeedStore } from './overspeedStore';
 import { createRadarStore, type RadarStore } from './radarStore';
+import { createRearAlertStore, type RearAlertStore } from './rearAlertStore';
 import { SETTINGS_STORAGE_KEY, createSettingsStore, pickSettings, settingsSnapshot, type SettingsStore } from './settingsStore';
 import { createToastStore, type ToastStore } from './toastStore';
 import { createTripStore, type CurrentTripRecord, type TripStore } from './tripStore';
@@ -101,12 +103,23 @@ export const overspeedStore: StoreApi<OverspeedStore> = createOverspeedStore({
   },
 });
 
+/** 後方來車：依設定響（注意柔和兩聲、危險急促四聲）、震動、語音 */
+export const rearAlertStore: StoreApi<RearAlertStore> = createRearAlertStore({
+  cue: (cue) => {
+    const s = settingsStore.getState();
+    if (s.rearSound) alertOutput.rearChime(cue);
+    if (s.rearVibrate) alertOutput.rearVibrate(cue);
+    if (s.rearVoice) alertOutput.speak(rearSpeech(cue));
+  },
+});
+
 export const useRadar = <T>(selector: (s: RadarStore) => T): T => useStore(radarStore, selector);
 export const useSettings = <T>(selector: (s: SettingsStore) => T): T => useStore(settingsStore, selector);
 export const useToasts = <T>(selector: (s: ToastStore) => T): T => useStore(toastStore, selector);
 export const useTrip = <T>(selector: (s: TripStore) => T): T => useStore(tripStore, selector);
 export const useCalibration = <T>(selector: (s: CalibrationStore) => T): T => useStore(calibrationStore, selector);
 export const useOverspeed = <T>(selector: (s: OverspeedStore) => T): T => useStore(overspeedStore, selector);
+export const useRearAlert = <T>(selector: (s: RearAlertStore) => T): T => useStore(rearAlertStore, selector);
 export const usePwa = <T>(selector: (s: PwaState) => T): T => useStore(pwaStore, selector);
 export const useUi = <T>(selector: (s: UiState) => T): T => useStore(uiStore, selector);
 
@@ -161,6 +174,16 @@ export const actions = {
       alertOutput.chime();
     }
   },
+  /** 後方來車提示的「測試」 */
+  previewRearAlert: async (cue: 'caution' | 'danger') => {
+    const s = settingsStore.getState();
+    if (s.rearVibrate) alertOutput.rearVibrate(cue);
+    if (s.rearSound) {
+      await alertOutput.unlock();
+      alertOutput.rearChime(cue);
+    }
+    if (s.rearVoice) alertOutput.speak(rearSpeech(cue));
+  },
   exportTripsCsv: () => {
     const trips = tripStore.getState().trips;
     if (trips.length === 0) return;
@@ -211,6 +234,7 @@ export const capabilities = {
   wakeLock: wakeLock.supported,
   alertSound: alertOutput.soundSupported,
   vibrate: alertOutput.vibrateSupported,
+  speech: alertOutput.speechSupported,
   /** Brave 預設關閉 Web Bluetooth（navigator.bluetooth 還在，但連線會被擋） */
   brave: !isDemo && typeof navigator !== 'undefined' && 'brave' in navigator,
   fullscreen: typeof document !== 'undefined' && typeof document.documentElement.requestFullscreen === 'function',
@@ -231,6 +255,7 @@ export function startServices(): void {
   settingsStore.subscribe((s, prev) => {
     if (s.keepAwake !== prev.keepAwake) syncWakeLock();
     if (s.speedAlert !== prev.speedAlert || s.speedLimitKmh !== prev.speedLimitKmh) overspeedStore.getState().reset();
+    if (s.rearAlert !== prev.rearAlert) rearAlertStore.getState().reset();
   });
   uiStore.subscribe((s, prev) => s.ride !== prev.ride && syncWakeLock());
 
@@ -263,6 +288,17 @@ export function startServices(): void {
       }
       tripStore.getState().onTelemetry(s.telemetry, overspeedStore.getState().active);
       calibrationStore.getState().onTelemetry(s.telemetry, s.config?.calibration ?? null);
+    }
+    if (s.rear && s.rear !== prev.rear) {
+      if (settingsStore.getState().rearAlert) rearAlertStore.getState().onRear(s.rear);
+      tripStore.getState().onRear(s.rear);
+    }
+    // 後方雷達資料中斷、斷線：下一次等級上升要重新提示
+    if ((s.rearStale && !prev.rearStale) || (s.connection.status !== 'connected' && prev.connection.status === 'connected')) {
+      rearAlertStore.getState().reset();
+    }
+    if (s.rear?.online === false && prev.rear?.online === true) {
+      toast('warning', '後方雷達離線', 'ESP32 收不到 LD2451 的資料，正在重試');
     }
     // 沒有資料時不能說還在超速（速度頁另外顯示「資料中斷」）
     if ((s.stale && !prev.stale) || (s.connection.status !== 'connected' && prev.connection.status === 'connected')) {

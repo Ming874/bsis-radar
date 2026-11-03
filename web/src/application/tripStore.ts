@@ -8,7 +8,7 @@ import { createStore } from 'zustand/vanilla';
 import { mergeTrips } from '../domain/backup';
 import { TraceBuilder, isTrace, type TripTrace } from '../domain/trace';
 import { TripMeter, type SavedTrip, type TripMeterState, type TripSnapshot } from '../domain/trip';
-import type { Telemetry } from '../domain/types';
+import type { RearTelemetry, Telemetry } from '../domain/types';
 
 export type { SavedTrip };
 
@@ -42,6 +42,8 @@ export interface TripState {
 export interface TripActions {
   /** @param overspeed 這一筆是否處於超速（由超速警示判斷） */
   onTelemetry: (t: Telemetry, overspeed?: boolean) => void;
+  /** 後方來車：累計警示次數 */
+  onRear: (rear: RearTelemetry) => void;
   /** 結束本次行程：夠長就存進紀錄（回傳存下的那一筆），然後從 0 開始 */
   finish: () => SavedTrip | null;
   deleteTrip: (id: string) => void;
@@ -80,6 +82,8 @@ export function parseCurrentRecord(value: unknown): CurrentTripRecord | null {
     finite(m.maxMps) &&
     finite(m.overspeedS) &&
     finite(m.overspeedCount) &&
+    (m.rearAlerts === undefined || finite(m.rearAlerts)) &&
+    (m.lastRearCnt === undefined || m.lastRearCnt === null || finite(m.lastRearCnt)) &&
     finite(m.lastUptime) &&
     (m.lastDr === null || finite(m.lastDr)) &&
     (m.lastDw === null || finite(m.lastDw)) &&
@@ -96,7 +100,7 @@ export function createTripStore(deps: TripStoreDeps) {
   let lastTrace = 0;
   let lastSave = 0;
 
-  const toSaved = (snap: TripSnapshot, endedAt: number, curve: TripTrace): SavedTrip => ({
+  const toSaved = (snap: Omit<TripSnapshot, 'rearAlerts'> & { rearAlerts?: number }, endedAt: number, curve: TripTrace): SavedTrip => ({
     ...snap,
     id: `${snap.startedAt}`,
     endedAt,
@@ -154,6 +158,11 @@ export function createTripStore(deps: TripStoreDeps) {
         lastSave = t.receivedAt;
         persist();
       }
+    },
+
+    onRear: (rear) => {
+      if (!rear.online) return;
+      if (meter.updateRear(rear.alerts)) set({ current: meter.snapshot() });
     },
 
     finish: () => {

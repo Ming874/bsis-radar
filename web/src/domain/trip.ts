@@ -4,7 +4,9 @@
  * 里程用韌體的雷達里程（DR）差值累加：韌體以 10 Hz 積分，藍牙斷線期間也照算，
  * 比網頁自己用 5～10 Hz 的速度積分準確。韌體重新開機（開機秒數或 DR 變小）時重新對齊，不會出現負的距離。
  * 超速時間與次數依呼叫端傳入的超速狀態累計（判斷見 overspeed.ts）。
+ * 後方來車的警示次數用韌體的累計值（REAR 行的 CNT）差值累加，ESP32 重新開機時重新對齊。
  */
+import { alertDelta } from './rear';
 import { isTrace, type TripTrace } from './trace';
 import type { Telemetry } from './types';
 
@@ -21,11 +23,12 @@ export interface TripSnapshot {
   wheelDistanceM: number | null;
   overspeedS: number; // 超過速限的累計時間
   overspeedCount: number; // 進入超速的次數
+  rearAlerts: number; // 後方來車警示次數
 }
 
-/** 存在行程紀錄裡的一筆（網頁 2.1 以前沒有超速欄位，3.0 以前沒有速度曲線與速限） */
-export type SavedTrip = Omit<TripSnapshot, 'overspeedS' | 'overspeedCount'> &
-  Partial<Pick<TripSnapshot, 'overspeedS' | 'overspeedCount'>> & {
+/** 存在行程紀錄裡的一筆（網頁 2.1 以前沒有超速欄位，3.0 以前沒有速度曲線與速限，3.1 以前沒有後方來車） */
+export type SavedTrip = Omit<TripSnapshot, 'overspeedS' | 'overspeedCount' | 'rearAlerts'> &
+  Partial<Pick<TripSnapshot, 'overspeedS' | 'overspeedCount' | 'rearAlerts'>> & {
     id: string;
     endedAt: number;
     trace?: TripTrace;
@@ -51,16 +54,20 @@ export function isSavedTrip(value: unknown): value is SavedTrip {
     (t.wheelDistanceM === null || t.wheelDistanceM === undefined || finite(t.wheelDistanceM)) &&
     (t.overspeedS === undefined || finite(t.overspeedS)) &&
     (t.overspeedCount === undefined || finite(t.overspeedCount)) &&
+    (t.rearAlerts === undefined || finite(t.rearAlerts)) &&
     (t.trace === undefined || isTrace(t.trace)) &&
     (t.limitKmh === undefined || t.limitKmh === null || finite(t.limitKmh))
   );
 }
 
 /** 存檔用：統計加上對齊的基準值（重新整理頁面後接續，韌體沒重開機時中間騎的距離也算得到） */
-export interface TripMeterState extends TripSnapshot {
+export interface TripMeterState extends Omit<TripSnapshot, 'rearAlerts'> {
   lastDr: number | null;
   lastDw: number | null;
   lastUptime: number;
+  /** 3.1 以前存的本次行程沒有這兩個欄位 */
+  rearAlerts?: number;
+  lastRearCnt?: number | null;
 }
 
 export class TripMeter {
@@ -71,6 +78,8 @@ export class TripMeter {
   private wheelDistanceM: number | null = null;
   private overspeedS = 0;
   private overspeedCount = 0;
+  private rearAlerts = 0;
+  private lastRearCnt: number | null = null;
   private lastOverspeed = false;
   private lastDr: number | null = null;
   private lastDw: number | null = null;
@@ -89,6 +98,7 @@ export class TripMeter {
     this.wheelDistanceM = null;
     this.overspeedS = 0;
     this.overspeedCount = 0;
+    this.rearAlerts = 0;
     this.lastOverspeed = false; // 重設時正在超速：算進新行程的第一次
     // 基準值保留：重設後從下一筆的差值開始累加
     this.lastAt = null;
@@ -103,6 +113,8 @@ export class TripMeter {
     this.wheelDistanceM = s.wheelDistanceM;
     this.overspeedS = s.overspeedS;
     this.overspeedCount = s.overspeedCount;
+    this.rearAlerts = s.rearAlerts ?? 0;
+    this.lastRearCnt = s.lastRearCnt ?? null;
     this.lastOverspeed = false;
     this.lastDr = s.lastDr;
     this.lastDw = s.lastDw;
@@ -111,7 +123,15 @@ export class TripMeter {
   }
 
   save(): TripMeterState {
-    return { ...this.snapshot(), lastDr: this.lastDr, lastDw: this.lastDw, lastUptime: this.lastUptime };
+    return { ...this.snapshot(), lastDr: this.lastDr, lastDw: this.lastDw, lastUptime: this.lastUptime, lastRearCnt: this.lastRearCnt };
+  }
+
+  /** 後方來車：韌體開機後的警示次數（REAR 行的 CNT）；回傳這次有沒有增加 */
+  updateRear(alerts: number): boolean {
+    const delta = alertDelta(this.lastRearCnt, alerts);
+    this.lastRearCnt = alerts;
+    this.rearAlerts += delta;
+    return delta > 0;
   }
 
   update(t: Telemetry, overspeed = false): void {
@@ -152,6 +172,7 @@ export class TripMeter {
       wheelDistanceM: this.wheelDistanceM,
       overspeedS: this.overspeedS,
       overspeedCount: this.overspeedCount,
+      rearAlerts: this.rearAlerts,
     };
   }
 }

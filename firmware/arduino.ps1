@@ -45,7 +45,9 @@ $TestSources = @(
   'core\SpeedConfig.cpp',
   'core\GroundSpeedEstimator.cpp',
   'core\WheelSpeed.cpp',
+  'core\RearThreat.cpp',
   'drivers\C4001Protocol.cpp',
+  'drivers\LD2451Protocol.cpp',
   'comm\CommandParser.cpp',
   'comm\Telemetry.cpp'
 )

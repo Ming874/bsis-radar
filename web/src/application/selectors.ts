@@ -2,7 +2,7 @@
  * 【應用層】把狀態整理成畫面要的文字與色調（純函式，可單元測試）。
  */
 import { FIRMWARE_MAJOR, firmwareMajor } from '../domain/protocol';
-import type { FrameVerdict, SpeedPoint, SpeedState } from '../domain/types';
+import type { FrameVerdict, RearLevel, SpeedPoint, SpeedState } from '../domain/types';
 import type { RadarState } from './radarStore';
 
 /** 畫面上的狀態色調：ok 正常、warn 需要注意、bad 異常、idle 沒有資料、busy 處理中 */
@@ -102,4 +102,25 @@ export function verdictBreakdown(verdicts: FrameVerdict[]): Array<{ verdict: Fra
   return [...counts.entries()]
     .map(([verdict, count]) => ({ verdict, count, pct: total ? (count / total) * 100 : 0 }))
     .sort((a, b) => b.count - a.count);
+}
+
+const REAR_VIEW: Record<RearLevel, StatusView> = {
+  safe: { tone: 'ok', label: '後方安全' },
+  caution: { tone: 'warn', label: '後方有車接近' },
+  danger: { tone: 'bad', label: '後方來車，小心' },
+};
+
+/**
+ * 後方來車的狀態（速度頁卡片、騎乘模式）。live = 有可以相信的即時資料（顯示距離、等級、提示）。
+ * 斷線、資料中斷、後方雷達離線時一律不說「安全」：看不到後面不代表後面沒車。
+ */
+export function describeRear(s: Pick<RadarState, 'connection' | 'rear' | 'rearStale' | 'config'>): StatusView & { live: boolean } {
+  if (s.connection.status !== 'connected') return { tone: 'idle', label: '未連線', live: false };
+  if (s.config && s.config.rear === null) return { tone: 'idle', label: '韌體沒有後方來車功能', detail: '請燒錄 3.1 以上的韌體', live: false };
+  if (!s.rear) return { tone: 'busy', label: '等待後方雷達', live: false };
+  if (s.rearStale) return { tone: 'bad', label: '後方雷達資料中斷', detail: '超過 2.5 秒沒有資料', live: false };
+  if (!s.rear.online) return { tone: 'bad', label: '後方雷達離線', detail: '檢查 LD2451 的 5V、GND 與 TX → GPIO25', live: false };
+  const view = REAR_VIEW[s.rear.level];
+  if (s.rear.holding) return { ...view, detail: '來車已不在雷達視野（正在旁邊超車），警示保持中', live: true };
+  return { ...view, live: true };
 }

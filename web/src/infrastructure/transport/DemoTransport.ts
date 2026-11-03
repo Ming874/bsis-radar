@@ -3,12 +3,14 @@
  *
  * 模擬一段城市騎乘（起步、巡航、變速、停等），每 0.1 秒一筆資料框：路面散射點的俯角分散、
  * 偶爾沒有回波或雜散目標、輪速感測器參考值。速度輸出模擬校正後的韌體：約 0.2 秒落後、1σ 約 1.5%。
+ * 後方來車：每 12～20 秒有一台車從 35 m 外以 10～45 km/h 的接近速度追上來（偶爾兩台），
+ * 用和韌體 RearThreat 相同的規則分級（確認 2 筆、5 m 或到達時間 ≤ TTC 危險、RANGE 內注意、保持 1.5 秒）。
  */
 import { NO_OVERSPEED, overspeedEvidence, stepOverspeed } from '../../domain/overspeed';
-import { DEFAULT_CONFIG } from '../../domain/protocol';
+import { DEFAULT_CONFIG, DEFAULT_REAR_CONFIG, REAR_DANGER_DIST_M, REAR_HOLD_MS, rearDetectRange } from '../../domain/protocol';
 import { TraceBuilder } from '../../domain/trace';
 import type { SavedTrip } from '../../domain/trip';
-import type { EditableConfig } from '../../domain/types';
+import type { EditableConfig, EditableRearConfig } from '../../domain/types';
 import { Emitter, type RadarTransport, type TransportState } from './RadarTransport';
 
 export const DEMO_DEVICE_NAME = 'BSIS-Speed（示範）';
@@ -31,11 +33,110 @@ function gauss(): number {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
 }
 
+interface DemoVehicle {
+  d: number; // 距離 m
+  v: number; // 接近速度 m/s
+  lat: number; // 左右 m（負 = 左邊：在台灣汽車從腳踏車左邊超車）
+}
+
+/**
+ * 來車時刻表（與騎乘曲線同樣 96 秒一輪，截圖才拍得到固定的畫面）：
+ * 19.5 秒左右一台慢車在警示距離內（注意）、29.5 秒左右兩台快車接近（危險）、75 秒（超速截圖）後方沒車
+ */
+const REAR_SCHEDULE: Array<{ t: number; kmh: number; lat: number; follow?: number }> = [
+  { t: 12.5, kmh: 12, lat: -1.6 },
+  { t: 27.0, kmh: 35, lat: -2.0, follow: 10 },
+  { t: 45.0, kmh: 20, lat: -1.4 },
+  { t: 63.0, kmh: 28, lat: -2.2 },
+  { t: 84.0, kmh: 18, lat: -1.5 },
+];
+
+/** 後方來車的模擬（每 0.1 秒一步），輸出與韌體相同格式的 REAR 行 */
+class DemoRear {
+  private vehicles: DemoVehicle[] = [];
+  private nextIndex = 0;
+  private cycle = 0;
+  private t = 0;
+  private frame = 0;
+  private evidence = 0;
+  private lastCaution = -Infinity;
+  private lastDanger = -Infinity;
+  private level = 0;
+  private alerts = 0;
+  private lastSentS = -Infinity;
+
+  /** 回傳要送的一行（不需要送時 null） */
+  step(cfg: EditableRearConfig): string | null {
+    this.t += 0.1;
+    const detect = rearDetectRange(cfg.rangeM);
+    const next = REAR_SCHEDULE[this.nextIndex];
+    if (next && this.t >= this.cycle * PERIOD_S + next.t) {
+      this.vehicles.push({ d: 35, v: next.kmh / 3.6, lat: next.lat });
+      if (next.follow) this.vehicles.push({ d: 35 + next.follow, v: (next.kmh - 2) / 3.6, lat: next.lat - 0.6 });
+      this.nextIndex++;
+      if (this.nextIndex === REAR_SCHEDULE.length) {
+        this.nextIndex = 0;
+        this.cycle++;
+      }
+    }
+    for (const c of this.vehicles) c.d -= c.v * 0.1;
+    this.vehicles = this.vehicles.filter((c) => c.d > 2.2); // 到旁邊就離開視野
+
+    // LD2451：偵測距離內、接近速度 ≥ RSPD 的才回報（整數）
+    const reported = this.vehicles
+      .filter((c) => c.d <= detect && c.v * 3.6 >= cfg.minSpeedKmh && Math.random() < 0.95)
+      .map((c) => ({
+        angle: Math.round((Math.atan2(c.lat, c.d) * 180) / Math.PI + gauss()),
+        d: Math.max(0, Math.round(c.d + 0.4 * gauss())),
+        kmh: Math.round(c.v * 3.6 + gauss()),
+      }));
+    const active = reported.length > 0;
+    if (active || this.frame === 0 || Math.round(this.t * 10) % 14 === 0) this.frame++; // 沒有目標時約每 1.4 秒一個空資料框
+
+    // 與韌體相同的分級
+    let lead: { d: number; kmh: number } | null = null;
+    let bestTtc = Infinity;
+    for (const r of reported) {
+      const ttc = r.kmh > 1.8 ? Math.max(r.d, 0.5) / (r.kmh / 3.6) : Infinity;
+      if (ttc < bestTtc) {
+        bestTtc = ttc;
+        lead = r;
+      }
+    }
+    this.evidence = lead ? Math.min(4, this.evidence + 1) : Math.max(0, this.evidence - 1);
+    const confirmed = this.evidence >= 2 && lead !== null;
+    let raw = 0;
+    if (confirmed && lead) {
+      if (lead.d <= REAR_DANGER_DIST_M || bestTtc <= cfg.ttcS) raw = 2;
+      else if (lead.d <= cfg.rangeM) raw = 1;
+    }
+    if (raw >= 1) this.lastCaution = this.t;
+    if (raw === 2) this.lastDanger = this.t;
+    const hold = REAR_HOLD_MS / 1000;
+    const level = this.t - this.lastDanger <= hold ? 2 : this.t - this.lastCaution <= hold ? 1 : 0;
+    const changed = level !== this.level;
+    if (this.level === 0 && level > 0) this.alerts++;
+    this.level = level;
+
+    const busy = active || level > 0;
+    if (!changed && this.t - this.lastSentS < (busy ? 0.099 : 0.499)) return null;
+    this.lastSentS = this.t;
+    const leadOk = confirmed && lead !== null;
+    const x = reported.length ? ` X=${reported.map((r) => `${r.angle}/${r.d}/${r.kmh}`).join(',')}` : '';
+    return (
+      `REAR ON=1 RO=0 LV=${level} D=${leadOk && lead ? lead.d.toFixed(1) : '-1.0'} V=${leadOk && lead ? (lead.kmh / 3.6).toFixed(2) : '0.00'} ` +
+      `TTC=${leadOk && Number.isFinite(bestTtc) ? bestTtc.toFixed(1) : '-1.0'} HOLD=${level > 0 && raw === 0 ? 1 : 0} N=${reported.length} CNT=${this.alerts} FN=${this.frame}${x}`
+    );
+  }
+}
+
 export class DemoTransport implements RadarTransport {
   private readonly lines = new Emitter<string>();
   private readonly states = new Emitter<TransportState>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private config: EditableConfig = { ...DEFAULT_CONFIG, calibration: 1.1621 };
+  private rearConfig: EditableRearConfig = { ...DEFAULT_REAR_CONFIG };
+  private rear = new DemoRear();
   private t = 0;
   private frame = 0;
   private est = 0;
@@ -100,8 +201,21 @@ export class DemoTransport implements RadarTransport {
       case 'VMAX':
         c.radialLimitMps = v;
         break;
+      case 'RANGE':
+        this.rearConfig.rangeM = v;
+        break;
+      case 'RSPD':
+        this.rearConfig.minSpeedKmh = v;
+        break;
+      case 'TTC':
+        this.rearConfig.ttcS = v;
+        break;
+      case 'RSNR':
+        this.rearConfig.snr = v;
+        break;
       case 'DEFAULTS':
         this.config = { ...DEFAULT_CONFIG };
+        this.rearConfig = { ...DEFAULT_REAR_CONFIG };
         break;
       default:
         this.reply('OK demo');
@@ -120,7 +234,8 @@ export class DemoTransport implements RadarTransport {
     const rad = (d: number) => (d * Math.PI) / 180;
     const rmin = Math.max(0.3, c.heightM / Math.sin(rad(Math.min(85, c.angleDeg + 30))) - 0.1);
     const rmax = c.heightM / Math.sin(rad(Math.max(8, c.angleDeg - 25))) + 0.1;
-    return `CFG ANGLE=${c.angleDeg.toFixed(1)} HEIGHT=${c.heightM.toFixed(2)} DIR=${c.direction} MODEL=${c.model === 'rangeGeometry' ? 1 : 0} CAL=${c.calibration.toFixed(4)} RTHR=${c.radarThreshold} WHEEL=${c.wheelMm} VMAX=${c.radialLimitMps.toFixed(2)} RMIN=${rmin.toFixed(2)} RMAX=${rmax.toFixed(2)} FW=3.0.0`;
+    const r = this.rearConfig;
+    return `CFG ANGLE=${c.angleDeg.toFixed(1)} HEIGHT=${c.heightM.toFixed(2)} DIR=${c.direction} MODEL=${c.model === 'rangeGeometry' ? 1 : 0} CAL=${c.calibration.toFixed(4)} RTHR=${c.radarThreshold} WHEEL=${c.wheelMm} VMAX=${c.radialLimitMps.toFixed(2)} RMIN=${rmin.toFixed(2)} RMAX=${rmax.toFixed(2)} RANGE=${r.rangeM} RSPD=${r.minSpeedKmh} TTC=${r.ttcS.toFixed(1)} RSNR=${r.snr} RDET=${rearDetectRange(r.rangeM)} FW=3.1.0`;
   }
 
   private tick() {
@@ -166,6 +281,8 @@ export class DemoTransport implements RadarTransport {
     const q = Math.round((100 * this.verdicts.filter((x) => x === 0).length) / this.verdicts.length);
     const sd = state === 3 ? 0.12 + 0.03 * speed : 0;
 
+    const rearLine = this.rear.step(this.rearConfig);
+    if (rearLine) this.lines.emit(rearLine);
     this.lines.emit(
       `R=1 ST=${state} V=${speed.toFixed(2)} SD=${sd.toFixed(2)} Q=${q} WD=0 FN=${this.frame} N=${n} RD=${rd.toFixed(2)} RV=${rv.toFixed(2)} E=${e} G=${g.toFixed(2)} FV=${fv} DR=${this.dr.toFixed(1)} W=${wheel.toFixed(2)} DW=${this.dw.toFixed(1)} T=${Math.floor(300 + this.t)}`,
     );
@@ -234,6 +351,7 @@ export function demoTrips(now: number): SavedTrip[] {
       wheelDistanceM: distanceM * (1 - 0.004 + rand() * 0.008),
       overspeedS: overS,
       overspeedCount: overCount,
+      rearAlerts: Math.round(p.minutes * (0.4 + rand() * 0.6)),
       limitKmh: 25,
       trace: trace.snapshot(),
     };

@@ -1,5 +1,5 @@
 /**
- * 【設定】顯示與騎乘偏好、超速警示（存在手機）、裝置參數（存在 ESP32）、維護、App 與資料、文件。
+ * 【設定】顯示與騎乘偏好、超速警示、後方來車警示（存在手機）、裝置參數（存在 ESP32）、維護、App 與資料、文件。
  */
 import { useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -7,6 +7,7 @@ import { actions, capabilities, openSheet, radarStore, settingsStore, toastStore
 import { ALERT_COOLDOWN_MS } from '../../../application/overspeedStore';
 import type { ThemeSetting } from '../../../application/settingsStore';
 import { OVERSPEED_ENTER_MS, OVERSPEED_EXIT_MS, OVERSPEED_HYSTERESIS_MPS, SPEED_LIMIT_KMH } from '../../../domain/overspeed';
+import { CAUTION_COOLDOWN_MS, DANGER_REPEAT_MS } from '../../../domain/rear';
 import { LIMITS, diffConfig, unambiguousGroundMps } from '../../../domain/protocol';
 import type { EditableConfig } from '../../../domain/types';
 import { formatLimit, mpsToKmh, type SpeedUnit } from '../../../domain/units';
@@ -152,6 +153,45 @@ function AlertGroup() {
         </Notice>
       )}
     </div>
+  );
+}
+
+/** 後方來車警示：提示方式（存在手機）；警示距離與 TTC 存在 ESP32，在「校正 → 後方雷達」調整 */
+function RearAlertGroup() {
+  const s = useSettings(useShallow((x) => ({ on: x.rearAlert, sound: x.rearSound, vibrate: x.rearVibrate, voice: x.rearVoice, mirror: x.rearMirror })));
+  const update = settingsStore.getState().update;
+  return (
+    <ListGroup
+      id="rear"
+      title="後方來車警示"
+      footer={`等級由 ESP32 判斷：確認的來車進入警示距離 → 注意；5 m 內或到達時間 ≤ TTC → 危險。注意響柔和兩聲（${CAUTION_COOLDOWN_MS / 1000} 秒內不重複），危險響急促四聲，來車還在後面時每 ${DANGER_REPEAT_MS / 1000} 秒再響。警示距離與 TTC 在「校正 → 後方雷達」調整。`}
+    >
+      <Row label="後方來車警示" detail="關閉後畫面照常顯示，只是不響">
+        <Switch label="後方來車警示" checked={s.on} onChange={(rearAlert) => update({ rearAlert })} />
+      </Row>
+      <Row label="提示音" detail={capabilities.alertSound ? '注意 1.4 kHz 兩聲、危險 2.8 kHz 四聲（和超速的聲音不同）' : '這個瀏覽器不支援'}>
+        <Switch label="後方提示音" checked={s.sound} disabled={!s.on || !capabilities.alertSound} onChange={(rearSound) => update({ rearSound })} />
+      </Row>
+      <Row label="震動" detail={capabilities.vibrate ? '危險時連續震三下' : '這個瀏覽器不支援'}>
+        <Switch label="後方震動" checked={s.vibrate} disabled={!s.on || !capabilities.vibrate} onChange={(rearVibrate) => update({ rearVibrate })} />
+      </Row>
+      <Row label="語音提示" detail={capabilities.speech ? '「後方有車」「後方來車，小心」' : '這個瀏覽器不支援'}>
+        <Switch label="語音提示" checked={s.voice} disabled={!s.on || !capabilities.speech} onChange={(rearVoice) => update({ rearVoice })} />
+      </Row>
+      <Row label="雷達畫面左右對調" detail="從左邊超車的車卻畫在右邊時打開（LD2451 角度的正負要看安裝方向）">
+        <Switch label="雷達畫面左右對調" checked={s.mirror} onChange={(rearMirror) => update({ rearMirror })} />
+      </Row>
+      <Row label="測試提示" detail="靜音或媒體音量為 0 時不會響">
+        <span className="flex gap-2">
+          <Button size="sm" variant="secondary" disabled={!s.on || (!s.sound && !s.vibrate && !s.voice)} onClick={() => void actions.previewRearAlert('caution')}>
+            注意
+          </Button>
+          <Button size="sm" variant="tinted" disabled={!s.on || (!s.sound && !s.vibrate && !s.voice)} onClick={() => void actions.previewRearAlert('danger')}>
+            危險
+          </Button>
+        </span>
+      </Row>
+    </ListGroup>
   );
 }
 
@@ -318,6 +358,7 @@ function DocsGroup() {
     { href: `${docs}/GETTING_STARTED.md`, label: '上手文件', detail: '安裝、燒錄、校正、驗收' },
     { href: `${docs}/ALGORITHM.md`, label: '演算法與文獻', detail: '對地測速原理、誤差分析' },
     { href: `${docs}/SPEED_ALERT.md`, label: '超速警示', detail: '速限依據、判斷規則、限制' },
+    { href: `${docs}/REAR_RADAR.md`, label: '後方來車雷達', detail: 'LD2451 原理、安裝、警示規則、限制' },
     { href: `${docs}/PROTOCOL.md`, label: '通訊協定', detail: '遙測欄位與指令' },
     { href: 'https://github.com/Ming874/bsis-radar', label: '原始碼', detail: 'GitHub' },
   ];
@@ -345,6 +386,7 @@ export function SettingsPage() {
         <div className="grid gap-7">
           <DisplayGroup />
           <AlertGroup />
+          <RearAlertGroup />
           <AppGroup />
         </div>
         <div className="grid gap-7">

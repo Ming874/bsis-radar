@@ -1,23 +1,28 @@
-# BSIS 專題：對地測速雷達（C4001 斜照路面量自行車速度）
+# BSIS 專題：對地測速雷達（C4001 斜照路面量自行車速度）＋ 後方來車雷達（LD2451）
 
 - GitHub：https://github.com/Ming874/bsis-radar（公開；`main` 分支）
-- 3.0 起 C4001 改為朝後下方照路面、量對地速度；後方來車改由另一套倒車雷達負責（不在本 repo）。2.x 後方來車版在 commit `8a5c3b6`
+- 3.0 起 C4001 改為朝後下方照路面、量對地速度；3.1 起加上 HLK-LD2451 朝正後方偵測來車（同一塊 ESP32、同一個網頁，原理與實測在 `docs/REAR_RADAR.md`）。2.x（C4001 當後方來車雷達）在 commit `8a5c3b6`
 - `firmware/`：ESP32 韌體（Arduino，sketch 在 `firmware/SpeedRadar`）
-  - 開發：`firmware/arduino.ps1`（compile / upload / monitor / test / release）。arduino-cli 的搜尋順序：`$env:ARDUINO_CLI` → Arduino IDE 內建 → PATH。這台電腦的 Arduino IDE 已移除（ESP32 套件 3.3.12 還在 `%LOCALAPPDATA%\Arduino15`），要用官方免安裝版 arduino-cli 並設定 `ARDUINO_CLI`
+  - 開發：`firmware/arduino.ps1`（compile / upload / monitor / test / release）。arduino-cli 的搜尋順序：`$env:ARDUINO_CLI` → Arduino IDE 內建 → PATH。這台電腦沒有 Arduino IDE；官方免安裝版 arduino-cli 在 `%LOCALAPPDATA%\Programs\arduino-cli\arduino-cli.exe`（使用者環境變數 `ARDUINO_CLI` 指向它），ESP32 套件 3.3.12 裝在 `%LOCALAPPDATA%\Arduino15`
   - 一鍵燒錄（不需 Arduino IDE）：雙擊 `firmware/flash.bat`，燒錄 `firmware/release/` 的預編譯檔；改了程式先跑 `.\arduino.ps1 release`
   - 燒錄時 USB 要插在 ESP32 板子本身的 USB-C 孔（擴充底板的孔只供電）；USB 晶片是 CH340，COM 埠號會變（出現過 COM7、COM3），用 `.\arduino.ps1 ports` 或裝置管理員確認
-  - 估計器 `src/core/GroundSpeedEstimator`（原理、文獻、參數依據在 `docs/ALGORITHM.md`）；改了 `src/core` 先跑 `.\arduino.ps1 test`（318 項，最後印出模擬報表）；新增 .cpp 要同時加進 `arduino.ps1` 的 `$TestSources` 與 `tests/run_tests.sh`
+  - 估計器 `src/core/GroundSpeedEstimator`（原理、文獻、參數依據在 `docs/ALGORITHM.md`）；改了 `src/core` 先跑 `.\arduino.ps1 test`（428 項，最後印出模擬報表）；新增 .cpp 要同時加進 `arduino.ps1` 的 `$TestSources` 與 `tests/run_tests.sh`
+  - 後方來車：LD2451 TX → GPIO25、RX → GPIO26（UART1，鮑率自動偵測，原廠 115200）。這台的 LD2451 **只接了 TX**（RX 沒接到任何 GPIO），韌體自動進入「只接收」模式（`REAR RO=1`），偵測設定寫不進雷達、由 ESP32 再篩一次；沒有目標時雷達約每 1.4 秒送一個空資料框。協定沒有檢查碼、實測有 1 → 0 的位元錯誤（LD2451 TX 高電位偏弱，接收腳一定要開內建上拉），解析器靠格式檢查擋（`src/drivers/LD2451Protocol`）。2026-11-04 稍晚雷達停止輸出，懷疑 5 V 供電或接線，尚未排除（`docs/REAR_RADAR.md` §2.3）。警示判斷 `src/core/RearThreat`（注意 = RANGE 內、危險 = 5 m 內或 TTC 內、保持 1.5 s）。方向位元組（1 = 靠近）與角度正負還沒在實車驗證（`docs/REAR_RADAR.md` §10）
+  - 找 LD2451 腳位與鮑率：燒錄 `firmware/diagnostics/LD2451Probe`（用完燒回正式韌體）
   - C4001 的測速上限不確定（規格書 3 m/s、資料框說明 10 m/s，觀察值約 3.28）：`VMAX` 預設 3.28、韌體依預測還原折疊、量到 |vr| > VMAX + 0.3 時自動調為 10 並存檔（ALGORITHM.md §2）
-  - 執行期參數（NVS 命名空間 `speedRadar`）：`ANGLE`、`HEIGHT`、`DIR`、`MODEL`、`CAL`、`RTHR`、`WHEEL`、`VMAX`；改 ANGLE／HEIGHT／RTHR 會把新的地面距離窗口寫進雷達（約 4 秒沒有資料）
+  - 執行期參數（NVS 命名空間 `speedRadar`）：`ANGLE`、`HEIGHT`、`DIR`、`MODEL`、`CAL`、`RTHR`、`WHEEL`、`VMAX`；改 ANGLE／HEIGHT／RTHR 會把新的地面距離窗口寫進雷達（約 4 秒沒有資料）。後方來車：`RANGE`、`RSPD`、`TTC`、`RSNR`（另外記版本 `rver`，壞掉只重設後方設定，不會清掉 CAL）
+  - 遙測：原本的 `R=… ST=…` 行不變；後方來車另外一行 `REAR ON=… LV=… D=… X=…`（每行都要放得進一個 BLE 通知，≤ 177 bytes，單元測試會檢查）
   - 輪速霍爾感測器（GPIO27，`core/WheelSpeed`）只當參考值：校正與驗證，不參與估計
   - 電腦端測試用 `C:\MinGW\bin\g++`（GCC 6.3，C++14）；Windows 會擋暫存資料夾裡新編出來的 exe，測試執行檔要放在 `firmware/tests/`（已被 .gitignore 排除）
   - 騎乘紀錄分析：`firmware/diagnostics/analyze_ride.py`（Python 標準函式庫；這台電腦有 Python 3.13）
 - `web/`：網頁（React + TypeScript + Vite），`npm test`、`npm run lint`、`npm run build`；Node.js 在 `C:\Program Files\nodejs`（指令前要把它加進 PATH）
   - 設計語言和 Lodestar（`C:\GitHub\lodestar`）統一：同樣的 token 名稱（`bg`、`surface`、`ink`、`muted`、`faint`、`line`、`tint`）、大標題頁面、卡片 20 px 圓角、膠囊按鈕、底部面板、浮動分頁列；BSIS 的重點色是藍（`#1765e5`）。仍然不用漸層、光暈、彩色圖示底；只有浮在內容上的導覽用半透明材質。元件在 `web/src/ui/kit`、基準在 `web/src/index.css`，頁面在 `ui/features`，外框在 `ui/shell`
   - 五個分頁：速度、行程、校正、數據、設定，加上騎乘模式（`#/ride`）；手機是浮動分頁列，電腦（≥ 1024 px）是左欄 + 雙欄；分頁同步到網址 `#/speed` 等
+  - 後方來車：速度頁 `RearCard`、騎乘模式右側直條（`ui/widgets/RearRadar`）、校正頁 `RearPanel`、設定頁「後方來車警示」、數據頁「後方雷達」；提示規則在 `domain/rear.ts`（注意柔和兩聲、危險急促四聲每 1.5 秒重複）。資料中斷或後方雷達離線時絕不顯示「安全」
   - PWA：用瀏覽器打開就提醒安裝（規則在 `infrastructure/pwa/install.ts`）；`public/sw.js` 照建置產生的 `precache.json` 離線快取；新版本靠 `/version.json` 比對，不自動重新載入（會中斷藍牙）
   - 截圖：`npm run screenshots`（`scripts/screenshots.mjs`，DevTools Protocol 模擬手機；先 `npm run dev -- --port 5180`）
-  - 示範模式 `?demo`（`infrastructure/transport/DemoTransport.ts`）：不需要硬體，也用來產生 `docs/images` 的截圖
+  - 示範模式 `?demo`（`infrastructure/transport/DemoTransport.ts`）：不需要硬體，也用來產生 `docs/images` 的截圖。後方來車照固定時刻表出現（約 19.5 秒注意、29.5 秒危險、75 秒沒有車），截圖才穩定
+  - 截圖時 dev server 只聽 `localhost`：`BASE=http://localhost:5180 node scripts/screenshots.mjs [檔名的一部分]`
   - 超速警示（預設 25 km/h，只在網頁端）：規則在 `domain/overspeed.ts`（遲滯 1 km/h、進入 0.5 秒、解除 1 秒），依據與限制在 `docs/SPEED_ALERT.md`
 - `docs/proposal/`（計畫書 PDF，含組員學號）不進 git
 

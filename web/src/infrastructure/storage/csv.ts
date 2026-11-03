@@ -4,7 +4,7 @@
  */
 import { tracePoints } from '../../domain/trace';
 import type { SavedTrip } from '../../domain/trip';
-import type { Telemetry } from '../../domain/types';
+import type { RearTelemetry, Telemetry } from '../../domain/types';
 
 const HEADER = [
   'time_iso',
@@ -24,6 +24,13 @@ const HEADER = [
   'radar_distance_m',
   'wheel_mps',
   'wheel_distance_m',
+  // 後方來車（韌體 3.1）：記錄當下最新的 REAR 行
+  'rear_online',
+  'rear_level',
+  'rear_distance_m',
+  'rear_closing_mps',
+  'rear_ttc_s',
+  'rear_targets',
 ];
 
 const cell = (v: number | null | boolean | string): string =>
@@ -43,7 +50,7 @@ export class CsvRecorder {
   }
 
   /** 新的資料框才記錄（心跳行的 FN 不變）；雷達離線時每一行都記，看得出中斷了多久 */
-  append(t: Telemetry): boolean {
+  append(t: Telemetry, rear: RearTelemetry | null = null): boolean {
     if (t.radarOnline && t.frame === this.lastFrame) return false;
     this.lastFrame = t.frame;
     this.rows.push(
@@ -65,6 +72,13 @@ export class CsvRecorder {
         t.radarDistanceM,
         cell(t.wheelMps),
         cell(t.wheelDistanceM),
+        rear ? cell(rear.online) : '',
+        rear?.online ? rear.level : '',
+        cell(rear?.distanceM ?? null),
+        cell(rear?.closingMps ?? null),
+        cell(rear?.ttcS ?? null),
+        // 角度/距離/速度，以空白分隔（欄位裡不能有逗號）
+        rear?.online ? rear.targets.map((x) => `${x.angleDeg}/${x.distanceM}/${x.speedKmh}`).join(' ') : '',
       ].join(','),
     );
     return true;
@@ -80,7 +94,7 @@ const fixed = (v: number | null | undefined, digits: number) => (v === null || v
 
 /** 行程紀錄 → CSV（「行程」頁的匯出）：一筆行程一列 */
 export function tripsCsv(trips: SavedTrip[]): string {
-  const header = 'start_iso,end_iso,distance_m,moving_s,elapsed_s,avg_kmh,max_kmh,overspeed_count,overspeed_s,limit_kmh,wheel_distance_m';
+  const header = 'start_iso,end_iso,distance_m,moving_s,elapsed_s,avg_kmh,max_kmh,overspeed_count,overspeed_s,limit_kmh,wheel_distance_m,rear_alerts';
   const rows = trips.map((t) =>
     [
       iso(t.startedAt),
@@ -94,6 +108,7 @@ export function tripsCsv(trips: SavedTrip[]): string {
       fixed(t.overspeedS, 1),
       fixed(t.limitKmh, 0),
       fixed(t.wheelDistanceM, 1),
+      t.rearAlerts ?? '',
     ].join(','),
   );
   return [header, ...rows].join('\n');

@@ -12,10 +12,15 @@
  *   RTHR 5         C4001 雷達本身的偵測門檻（整數 1 ~ 50，越大越不靈敏）
  *   WHEEL 2105     輪周長（mm，整數 1000 ~ 3000），輪速感測器（參考值）用
  *   VMAX 10        C4001 徑向速度上限（m/s，2 ~ 20），實測決定（docs/ALGORITHM.md §2）
+ *   RANGE 15       後方來車警示距離（m，整數 5 ~ 50）
+ *   RSPD 5         後方來車最低接近速度（km/h，整數 1 ~ 30），寫進 LD2451
+ *   TTC 2.5        到達時間低於這個值算危險（s，1.0 ~ 6.0）
+ *   RSNR 4         LD2451 的訊噪比門檻（整數 3 ~ 8，越大越不靈敏）
  *   DEFAULTS       恢復預設值
  *   REBOOT         重新開機
  *   HELP           列出指令
  * ANGLE、HEIGHT、RTHR 會改變寫進雷達的設定：ESP32 重新設定雷達，約 4 秒內沒有資料。
+ * RANGE、RSPD、RSNR 會重新寫入後方雷達（接了 LD2451 RX 才寫得進去，約 1 秒內沒有資料）。
  */
 #pragma once
 #include <stdint.h>
@@ -34,6 +39,10 @@ enum class CommandType : uint8_t {
   RadarThreshold,
   Wheel,
   RadialLimit,
+  RearRange,
+  RearMinSpeed,
+  RearTtc,
+  RearSnr,
   Defaults,
   Reboot,
   Unknown,
@@ -48,7 +57,7 @@ struct Command {
 
 Command parseCommand(const char* text);
 
-// 會修改設定的指令（ANGLE/HEIGHT/DIR/MODEL/CAL/RTHR/WHEEL/VMAX/DEFAULTS）
+// 會修改設定的指令（ANGLE/HEIGHT/DIR/MODEL/CAL/RTHR/WHEEL/VMAX/RANGE/RSPD/TTC/RSNR/DEFAULTS）
 bool isConfigCommand(CommandType type);
 
 // 驗證並套用到 cfg。成功回傳 true；失敗回傳 false，error 指向錯誤說明（cfg 不變）

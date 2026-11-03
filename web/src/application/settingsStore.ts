@@ -17,6 +17,11 @@ export interface AppSettings {
   speedLimitKmh: number; // 速限
   alertSound: boolean;
   alertVibrate: boolean;
+  rearAlert: boolean; // 後方來車警示
+  rearSound: boolean;
+  rearVibrate: boolean;
+  rearVoice: boolean; // 語音提示（「後方有車」）
+  rearMirror: boolean; // 後方雷達畫面左右對調（LD2451 角度的正負要看安裝方向）
   haptics: boolean; // 按鍵的觸覺回饋（Android）
 }
 
@@ -34,6 +39,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   speedLimitKmh: 25, // 台灣電動輔助自行車、微型電動二輪車的最大行駛速率（docs/SPEED_ALERT.md §1）
   alertSound: true,
   alertVibrate: true,
+  rearAlert: true,
+  rearSound: true,
+  rearVibrate: true,
+  rearVoice: false,
+  rearMirror: false,
   haptics: true,
 };
 

@@ -4,6 +4,7 @@
  *
  * 每次 loop 的資料流：
  *   C4001Radar（資料框）→ GroundSpeedEstimator（對地速度、里程）→ Telemetry（格式化）→ BleLink / USB
+ *   LD2451Radar（後方資料框）→ RearThreat（來車警示）→ Telemetry 的 REAR 行 → BleLink / USB
  *   WheelSensor（輪速脈衝）→ WheelSpeed（參考速度、里程）→ Telemetry 的 W / DW 欄位
  *   BleLink / USB（指令）→ CommandParser（解析驗證）→ SettingsStore（存 NVS）→ 必要時重新設定雷達
  */
@@ -12,9 +13,11 @@
 
 #include "../comm/BleLink.h"
 #include "../core/GroundSpeedEstimator.h"
+#include "../core/RearThreat.h"
 #include "../core/SpeedConfig.h"
 #include "../core/WheelSpeed.h"
 #include "../drivers/C4001Radar.h"
+#include "../drivers/LD2451Radar.h"
 #include "../drivers/StatusLed.h"
 #include "../drivers/WheelSensor.h"
 #include "../storage/SettingsStore.h"
@@ -22,9 +25,11 @@
 class SpeedRadarApp {
  public:
   struct Wiring {
-    HardwareSerial&      radarPort;
-    Stream&              console;  // USB 序列埠：輸出與 BLE 相同的遙測 + 接收指令
-    C4001Radar::Settings radar;
+    HardwareSerial&       radarPort;
+    HardwareSerial&       rearPort;  // 後方來車雷達 LD2451
+    Stream&               console;   // USB 序列埠：輸出與 BLE 相同的遙測 + 接收指令
+    C4001Radar::Settings  radar;
+    LD2451Radar::Settings rear;
     BleLink::Config      ble;
     int8_t               ledPin;
     int8_t               wheelPin;  // 輪速感測器（霍爾開關），-1 = 不使用
@@ -42,6 +47,7 @@ class SpeedRadarApp {
   enum class Channel : uint8_t { Usb, Ble };
 
   void       pumpRadar(uint32_t nowMs);
+  void       pumpRear(uint32_t nowMs);
   void       pumpCommands();
   void       pollUsbSerial();
   void       handleCommand(const char* text, Channel from);
@@ -49,6 +55,9 @@ class SpeedRadarApp {
   void       sendConfig(Channel to);
   void       broadcastConfig();
   void       applyRadarDetection(uint32_t nowMs);
+  void       applyRearDetection(uint32_t nowMs);
+  void       logRearLevel();
+  void       publishRear(uint32_t nowMs);
   void       raiseRadialLimit(float observedMps);
   void       publishTelemetry(uint32_t nowMs);
   LedPattern ledPattern() const;
@@ -56,6 +65,8 @@ class SpeedRadarApp {
   Stream&              console_;
   C4001Radar           radar_;
   GroundSpeedEstimator estimator_;
+  LD2451Radar          rear_;
+  RearThreat           threat_;
   BleLink              ble_;
   BleLink::Config      bleConfig_;
   StatusLed            led_;
@@ -74,6 +85,14 @@ class SpeedRadarApp {
   uint32_t         lastFrameMs_    = 0;
   uint32_t         lastPublishMs_  = 0;
   bool             radarWasOnline_ = false;
+
+  RearFrame        lastRearFrame_;
+  bool             hasRearFrame_      = false;
+  uint32_t         lastRearFrameMs_   = 0;
+  uint32_t         rearFrames_        = 0;
+  uint32_t         lastRearPublishMs_ = 0;
+  bool             rearWasOnline_     = false;
+  uint32_t         rearDisagreeSeen_  = 0;
   char             usbLine_[BleLink::kMaxCommandLen + 1] = {};
   size_t           usbLen_         = 0;
 };

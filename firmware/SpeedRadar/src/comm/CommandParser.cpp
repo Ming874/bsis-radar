@@ -19,6 +19,8 @@ const Keyword kKeywords[] = {
     {"CAL", CommandType::Calibration},  {"RTHR", CommandType::RadarThreshold},
     {"WHEEL", CommandType::Wheel},      {"DEFAULTS", CommandType::Defaults},
     {"REBOOT", CommandType::Reboot},    {"VMAX", CommandType::RadialLimit},
+    {"RANGE", CommandType::RearRange},  {"RSPD", CommandType::RearMinSpeed},
+    {"TTC", CommandType::RearTtc},      {"RSNR", CommandType::RearSnr},
 };
 
 // 上下限是 float（例如 0.15f 實際是 0.1500000060），留一點容許誤差，邊界值才不會被誤判超出範圍
@@ -94,6 +96,10 @@ bool isConfigCommand(CommandType type) {
     case CommandType::RadarThreshold:
     case CommandType::Wheel:
     case CommandType::RadialLimit:
+    case CommandType::RearRange:
+    case CommandType::RearMinSpeed:
+    case CommandType::RearTtc:
+    case CommandType::RearSnr:
     case CommandType::Defaults:
       return true;
     default:
@@ -103,7 +109,7 @@ bool isConfigCommand(CommandType type) {
 
 const char* const kHelpText =
     "OK commands: GET, ANGLE <deg>, HEIGHT <m>, DIR 1|-1, MODEL 0|1, CAL <factor>, RTHR <1-50>, WHEEL <mm>, "
-    "VMAX <m/s>, DEFAULTS, REBOOT\n";
+    "VMAX <m/s>, RANGE <m>, RSPD <km/h>, TTC <s>, RSNR <3-8>, DEFAULTS, REBOOT\n";
 
 bool applyCommand(const Command& cmd, SpeedConfig& cfg, const char** error) {
   const char* err = nullptr;
@@ -149,6 +155,22 @@ bool applyCommand(const Command& cmd, SpeedConfig& cfg, const char** error) {
       case CommandType::RadialLimit:
         if (inRange(v, limits::kVmaxLo, limits::kVmaxHi)) next.radialLimitMps = static_cast<float>(v);
         else err = "VMAX must be 2-20 (m/s)";
+        break;
+      case CommandType::RearRange:
+        if (inRange(v, limits::kRangeLoM, limits::kRangeHiM) && isWhole(v)) next.rear.rangeM = static_cast<uint8_t>(v);
+        else err = "RANGE must be an integer 5-50 (m)";
+        break;
+      case CommandType::RearMinSpeed:
+        if (inRange(v, limits::kRearSpdLo, limits::kRearSpdHi) && isWhole(v)) next.rear.minSpeedKmh = static_cast<uint8_t>(v);
+        else err = "RSPD must be an integer 1-30 (km/h)";
+        break;
+      case CommandType::RearTtc:
+        if (inRange(v, limits::kTtcLoS, limits::kTtcHiS)) next.rear.ttcS = static_cast<float>(v);
+        else err = "TTC must be 1.0-6.0 (s)";
+        break;
+      case CommandType::RearSnr:
+        if (inRange(v, limits::kRearSnrLo, limits::kRearSnrHi) && isWhole(v)) next.rear.snr = static_cast<uint8_t>(v);
+        else err = "RSNR must be an integer 3-8";
         break;
       default:
         err = "not a setting";

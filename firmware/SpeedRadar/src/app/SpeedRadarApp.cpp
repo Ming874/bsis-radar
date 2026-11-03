@@ -4,12 +4,16 @@
 #include "../comm/Telemetry.h"
 
 namespace {
-constexpr uint32_t kFrameStaleMs = 1000;  // 超過 1 秒沒有新資料框，不再送舊的原始值
+constexpr uint32_t kFrameStaleMs     = 1000;  // 超過 1 秒沒有新資料框，不再送舊的原始值
+constexpr uint32_t kRearBusyMs       = 100;   // 後方有目標或警示中：REAR 行每 0.1 秒
+constexpr uint32_t kRearIdleMs       = 500;   // 後方沒有目標：每 0.5 秒（網頁用來確認後方雷達還在）
+constexpr uint32_t kRearOfflineMs    = 1000;  // 後方雷達離線：每 1 秒送一行 REAR ON=0
 }
 
 SpeedRadarApp::SpeedRadarApp(const Wiring& w)
     : console_(w.console),
       radar_(w.radarPort, w.radar, w.console),
+      rear_(w.rearPort, w.rear, w.console),
       bleConfig_(w.ble),
       led_(w.ledPin),
       wheel_(w.wheelPin),
@@ -32,6 +36,8 @@ void SpeedRadarApp::begin() {
 
   applyRadarDetection(millis());  // 地面距離窗口與門檻：begin() 前只記下來，begin() 時一起寫入
   radar_.begin(millis());
+  applyRearDetection(millis());   // 後方雷達的偵測距離、最低速度、訊噪比
+  rear_.begin(millis());
   wheel_.begin();  // 輪速感測器（參考值）：收到第一個脈衝後才開始回報
   console_.println("輸入 HELP 查看指令。每一筆雷達資料框輸出一行遙測，欄位見 docs/PROTOCOL.md");
 }
@@ -40,6 +46,7 @@ void SpeedRadarApp::loop() {
   const uint32_t now = millis();
 
   pumpRadar(now);
+  pumpRear(now);
   estimator_.update(now);  // 逾時（保持 → 靜止 / 訊號中斷）與里程
   uint32_t pulseMs;
   while (wheel_.popPulse(pulseMs)) wheelSpeed_.onPulse(pulseMs);
@@ -88,6 +95,83 @@ void SpeedRadarApp::raiseRadialLimit(float observedMps) {
 void SpeedRadarApp::applyRadarDetection(uint32_t nowMs) {
   const GroundWindow w = groundWindow(config_);
   radar_.setDetection({w.radarMinM, w.radarMaxM, config_.radarThreshold}, nowMs);
+}
+
+// ---------------------------------------------------------------- 後方來車
+void SpeedRadarApp::pumpRear(uint32_t nowMs) {
+  rear_.update(nowMs);
+  if (!rear_.enabled()) return;
+
+  const bool online = rear_.online();
+  if (!online && rearWasOnline_) {
+    threat_.reset();  // 離線：不能說後面沒車，也不能沿用舊的警示；網頁另外顯示「後方雷達離線」
+    hasRearFrame_ = false;
+  }
+  rearWasOnline_ = online;
+
+  RearFrame f;
+  while (rear_.readFrame(f)) {
+    threat_.onFrame(f, nowMs, config_.rear);
+    lastRearFrame_   = f;
+    hasRearFrame_    = true;
+    lastRearFrameMs_ = nowMs;
+    rearFrames_++;
+  }
+  if (hasRearFrame_ && nowMs - lastRearFrameMs_ > kFrameStaleMs) hasRearFrame_ = false;
+  threat_.update(nowMs, config_.rear);
+
+  if (threat_.trendDisagree() != rearDisagreeSeen_) {
+    rearDisagreeSeen_ = threat_.trendDisagree();
+    console_.printf("[後方] 一台回報為「靠近」的目標距離卻在變遠（第 %lu 次，已排除）：方向判斷可能有誤，見 docs/REAR_RADAR.md §2\n",
+                    static_cast<unsigned long>(rearDisagreeSeen_));
+  }
+
+  if (threat_.consumeLevelChange()) {
+    logRearLevel();
+    publishRear(nowMs);  // 等級改變立刻通知，不等下一個週期
+    return;
+  }
+  const bool busy = threat_.state().level != RearLevel::Safe || (hasRearFrame_ && lastRearFrame_.count > 0);
+  const uint32_t period = !online ? kRearOfflineMs : (busy ? kRearBusyMs : kRearIdleMs);
+  if (nowMs - lastRearPublishMs_ >= period) publishRear(nowMs);
+}
+
+void SpeedRadarApp::applyRearDetection(uint32_t nowMs) {
+  rear_.setDetection({config_.rear.detectRangeM(), config_.rear.minSpeedKmh, config_.rear.snr}, nowMs);
+}
+
+void SpeedRadarApp::logRearLevel() {
+  const RearState& r = threat_.state();
+  switch (r.level) {
+    case RearLevel::Safe:
+      console_.println("[後方] 安全");
+      break;
+    case RearLevel::Caution:
+    case RearLevel::Danger:
+      if (r.hasLead) {
+        console_.printf("[後方] %s：來車 %.0f m、接近 %.0f km/h、%.1f 秒到達（第 %lu 次警示）\n",
+                        r.level == RearLevel::Danger ? "危險" : "注意", r.distanceM, r.closingMps * 3.6f,
+                        r.ttcS, static_cast<unsigned long>(r.alerts));
+      } else {
+        console_.printf("[後方] %s（保持中）\n", r.level == RearLevel::Danger ? "危險" : "注意");
+      }
+      break;
+  }
+}
+
+void SpeedRadarApp::publishRear(uint32_t nowMs) {
+  lastRearPublishMs_ = nowMs;
+  RearSnapshot s;
+  s.online      = rear_.online();
+  s.receiveOnly = rear_.receiveOnly();
+  s.state       = threat_.state();
+  s.frame       = rearFrames_;
+  s.hasFrame    = hasRearFrame_;
+  s.raw         = lastRearFrame_;
+  char line[kRearLineMax];
+  if (formatRear(s, line, sizeof(line)) == 0) return;
+  ble_.sendLine(line);
+  console_.print(line);
 }
 
 // ---------------------------------------------------------------- 指令
@@ -162,6 +246,7 @@ void SpeedRadarApp::handleCommand(const char* text, Channel from) {
   broadcastConfig();  // 網頁與序列埠都更新成新設定
   // 安裝幾何或門檻改了：地面距離窗口要重新寫進雷達（約 4 秒內沒有資料，網頁會短暫顯示雷達離線）
   applyRadarDetection(millis());
+  applyRearDetection(millis());  // 後方雷達的設定沒變就不會重寫
 }
 
 void SpeedRadarApp::reply(Channel to, const char* line) {

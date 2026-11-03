@@ -5,9 +5,23 @@ import { useId, type ComponentType, type ReactNode } from 'react';
 import { FOCUS_RING_INSET, cx, haptic } from './base';
 import { ChevronRightIcon, type IconProps } from './icons';
 
-export function Card({ children, className = '', alert = false, id }: { children: ReactNode; className?: string; alert?: boolean; id?: string }) {
+/** alert：紅框（超速、後方危險）；tone="warn"：黃框（後方注意） */
+export function Card({
+  children,
+  className = '',
+  alert = false,
+  tone,
+  id,
+}: {
+  children: ReactNode;
+  className?: string;
+  alert?: boolean;
+  tone?: 'warn' | 'bad';
+  id?: string;
+}) {
+  const ring = alert || tone === 'bad' ? 'ring-2 ring-bad' : tone === 'warn' ? 'ring-2 ring-warn' : '';
   return (
-    <div id={id} className={cx('card min-w-0', alert && 'ring-2 ring-bad', className)}>
+    <div id={id} className={cx('card min-w-0', ring, className)}>
       {children}
     </div>
   );

@@ -1,5 +1,5 @@
 /**
- * 【數據】診斷與記錄：即時資料框、距離 × 徑向速度散佈圖、判斷統計、CSV 記錄、指令主控台。
+ * 【數據】診斷與記錄：即時資料框（C4001、後方 LD2451）、距離 × 徑向速度散佈圖、判斷統計、CSV 記錄、指令主控台。
  * 手機用上方的分段切換（一次看一塊，主控台不用捲到最下面）；電腦兩欄全部攤開。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -42,6 +42,56 @@ function FrameCard() {
             { label: 'ESP32 運作', value: t ? formatDuration(t.uptimeS) : DASH },
           ]}
         />
+      </Card>
+    </Section>
+  );
+}
+
+const REAR_LEVEL_LABEL = { safe: '安全', caution: '注意', danger: '危險' } as const;
+
+function RearFrameCard() {
+  const s = useRadar(useShallow((r) => ({ rear: r.rear, stale: r.rearStale, rate: r.rearFrameRateHz, supported: r.config?.rear !== null })));
+  const r = s.rear;
+  const status = !r ? (s.supported ? '沒有資料' : '韌體沒有後方來車功能') : s.stale ? '資料中斷' : !r.online ? '離線' : r.receiveOnly ? '在線（只接收）' : '在線';
+  return (
+    <Section title="後方雷達" description="LD2451：有目標時連續輸出；沒有目標時約每 1.4 秒一個空資料框">
+      <Card className="overflow-hidden">
+        <KeyValue
+          dense
+          rows={[
+            { label: '狀態', value: <span className="font-sans">{status}</span> },
+            { label: '資料框 FN', value: r?.online ? `#${r.frame}` : DASH, hint: s.rate === null ? undefined : `${s.rate.toFixed(1)} Hz` },
+            { label: '警示等級 LV', value: r?.online ? <span className="font-sans">{REAR_LEVEL_LABEL[r.level]}{r.holding ? '（保持中）' : ''}</span> : DASH },
+            { label: '主要來車 D', value: r?.distanceM?.toFixed(1) ?? DASH, unit: r?.distanceM == null ? undefined : 'm', hint: '濾波後' },
+            { label: '接近速度 V', value: r?.closingMps == null ? DASH : (r.closingMps * 3.6).toFixed(0), unit: r?.closingMps == null ? undefined : 'km/h' },
+            { label: '到達時間 TTC', value: r?.ttcS?.toFixed(1) ?? DASH, unit: r?.ttcS == null ? undefined : 's' },
+            { label: '警示次數 CNT', value: r?.online ? r.alerts : DASH, hint: 'ESP32 開機起' },
+          ]}
+        />
+        {r?.online && r.targets.length > 0 && (
+          <table className="w-full border-t border-line text-subhead">
+            <thead>
+              <tr className="text-left text-footnote text-muted">
+                <th className="px-4 py-2 font-normal">目標</th>
+                <th className="px-2 py-2 text-right font-normal">角度</th>
+                <th className="px-2 py-2 text-right font-normal">距離</th>
+                <th className="px-4 py-2 text-right font-normal">速度</th>
+              </tr>
+            </thead>
+            <tbody className="num font-mono">
+              {r.targets.map((t, i) => (
+                <tr key={i} className="border-t border-line">
+                  <td className="px-4 py-2 font-sans text-muted">{i + 1}</td>
+                  <td className="px-2 py-2 text-right">{t.angleDeg}°</td>
+                  <td className="px-2 py-2 text-right">{t.distanceM} m</td>
+                  <td className={cx('px-4 py-2 text-right', t.speedKmh > 0 ? 'text-ink' : 'text-faint')}>
+                    {t.speedKmh > 0 ? `靠近 ${t.speedKmh}` : `遠離 ${-t.speedKmh}`} km/h
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </Card>
     </Section>
   );
@@ -228,6 +278,7 @@ export function DataPage() {
           <div className="grid gap-6">
             <RecorderCard />
             <FrameCard />
+            <RearFrameCard />
           </div>
           <div className="grid gap-6">
             <ScatterCard />
@@ -262,6 +313,7 @@ export function DataPage() {
           <>
             <RecorderCard />
             <FrameCard />
+            <RearFrameCard />
           </>
         )}
         {view === 'chart' && (

@@ -88,6 +88,7 @@ function tripSummary(t: SavedTrip, unit: SpeedUnit): string {
   const parts = [formatDurationWords(t.movingS)];
   if (avg !== null) parts.push(`平均 ${formatSpeed(avg, unit)} ${speedUnitLabel(unit)}`);
   if (t.overspeedCount) parts.push(`超速 ${t.overspeedCount} 次`);
+  if (t.rearAlerts) parts.push(`後方來車 ${t.rearAlerts} 次`);
   return parts.join(' · ');
 }
 
@@ -141,6 +142,7 @@ function TripDetail({ trip, unit, onClose }: { trip: SavedTrip | null; unit: Spe
           value={t.overspeedCount === undefined ? '沒有紀錄' : t.overspeedCount === 0 ? '未超過速限' : `${t.overspeedCount} 次，共 ${formatDuration(t.overspeedS ?? 0)}`}
           detail={t.limitKmh ? `速限 ${t.limitKmh} km/h` : t.limitKmh === null ? '當時沒開超速警示' : undefined}
         />
+        <Row label="後方來車警示" value={t.rearAlerts === undefined ? '沒有紀錄' : `${t.rearAlerts} 次`} detail={t.rearAlerts === undefined ? '網頁 3.1 以前存的紀錄' : '確認的來車進入警示距離的次數'} />
         <Row label="輪速感測器里程" value={t.wheelDistanceM === null ? '沒有接' : `${wheel.value} ${wheel.unit}`} detail={wheelDiff === null ? undefined : `雷達相對輪速 ${formatPercent(wheelDiff, 1)}`} />
       </div>
       <ConfirmSheet

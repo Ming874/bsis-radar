@@ -6,6 +6,7 @@
 | --- | --- |
 | `analyze_ride.py` | 分析網頁「數據 → 記錄 CSV」下載的騎乘紀錄：資料框統計、C4001 測速上限（截斷或折疊）、兩種速度模型的最佳校正係數、與輪速的比對 |
 | `C4001Bridge/` | 暫時燒進 ESP32 的直通程式：USB（115200）⇄ C4001（9600），每行加上 ESP32 時間（ms），可直接對雷達下指令 |
+| `LD2451Probe/` | 暫時燒進 ESP32：自動找出 HLK-LD2451 接在哪兩支腳、用哪個鮑率，讀回韌體與設定，之後每個資料框印一行 |
 | `bridge.ps1` | 搭配直通程式：依序送指令並記錄雷達的每一筆原始輸出 |
 | `analyze.awk` | 分析 `bridge.ps1` 的紀錄：偵測率、外插資料框、距離／速度／能量統計、每秒時間軸 |
 
@@ -47,8 +48,25 @@ $cli = $env:ARDUINO_CLI   # 或 Arduino IDE 內建的 arduino-cli.exe
 
 **用完一定要燒回正式韌體**（`..\flash.bat` 或 `..\arduino.ps1 upload`）。正式韌體開機時會重新寫入雷達設定，直通期間改過的雷達設定不會留下影響；ESP32 上的參數（NVS）也不受影響。
 
+## LD2451 腳位偵測
+
+```powershell
+$cli = $env:ARDUINO_CLI
+& $cli compile --fqbn esp32:esp32:esp32 --build-path .\.probe_build .\LD2451Probe
+& $cli upload --fqbn esp32:esp32:esp32 --port COM7 --input-dir .\.probe_build .\LD2451Probe
+..\arduino.ps1 monitor -Port COM7
+```
+
+1. **被動**：同時監看 19 支候選腳 2.5 秒，電位有變化的就是 LD2451 TX；在那支腳上依序試 8 種鮑率並印出原始位元組（`SNIFF`）。
+2. **找 TX**：知道 RX 之後，輪流在候選腳上送「進入設定」，有回覆的就是接到 LD2451 RX 的腳（先用開汲極、再用推挽；GPIO27／2／0 只用開汲極）。
+3. **被動找不到**時（LD2451 沒有目標時可能完全不送）：輪流在候選腳送指令，看哪一支腳有回覆。
+4. 印出 `RESULT rx=… tx=… baud=…`、10～30 秒的原始位元組（看資料框間隔與位元錯誤）、韌體版本、目標參數、靈敏度，之後每個資料框一行（`FRAME targets=… | angle=… dist=… dir=… speed=…`）。
+5. 序列埠可輸入 `R`（讀設定）、`T <距離> <方向> <速度> <延遲>`、`S <觸發次數> <訊噪比>`。
+
+不碰 C4001（GPIO16／17）、USB（1／3）、flash（6～11）。本機 2026-11-04 的結果見 [REAR_RADAR.md](../../docs/REAR_RADAR.md) §2.3。
+
 ## 注意
 
 - Windows PowerShell 5.1 會用系統編碼讀沒有 BOM 的 `.ps1`，所以 `bridge.ps1` 只用英文。
-- 紀錄檔（`*.txt`）與 `.bridge_build/` 不放進 git。
+- 紀錄檔（`*.txt`）、`.bridge_build/`、`.probe_build/` 不放進 git。
 - 2.x（後方來車偵測）的語音引導走動測試（`guided_test.ps1`）已移除，保留在 commit `8a5c3b6`。

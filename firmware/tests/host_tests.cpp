@@ -4,12 +4,16 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <initializer_list>
+
 #include "comm/CommandParser.h"
 #include "comm/Telemetry.h"
 #include "core/GroundSpeedEstimator.h"
+#include "core/RearThreat.h"
 #include "core/SpeedConfig.h"
 #include "core/WheelSpeed.h"
 #include "drivers/C4001Protocol.h"
+#include "drivers/LD2451Protocol.h"
 
 static int gChecks   = 0;
 static int gFailures = 0;
@@ -910,7 +914,32 @@ static void testCommands() {
   CHECK(!applyCommand(parseCommand("VMAX 25"), c, &err));
   CHECK_NEAR(c.radialLimitMps, 20.0, 1e-6);
 
+  // 後方來車
+  CHECK(isConfigCommand(CommandType::RearRange) && isConfigCommand(CommandType::RearTtc));
+  CHECK(applyCommand(parseCommand("RANGE 20"), c, &err) && c.rear.rangeM == 20);
+  CHECK(applyCommand(parseCommand("range=5"), c, &err) && c.rear.rangeM == 5);
+  CHECK(applyCommand(parseCommand("RANGE 50"), c, &err) && c.rear.rangeM == 50);
+  CHECK(!applyCommand(parseCommand("RANGE 4"), c, &err));
+  CHECK(!applyCommand(parseCommand("RANGE 51"), c, &err));
+  CHECK(!applyCommand(parseCommand("RANGE 15.5"), c, &err));
+  CHECK(c.rear.rangeM == 50);
+  CHECK(applyCommand(parseCommand("RSPD 8"), c, &err) && c.rear.minSpeedKmh == 8);
+  CHECK(!applyCommand(parseCommand("RSPD 0"), c, &err));
+  CHECK(!applyCommand(parseCommand("RSPD 31"), c, &err));
+  CHECK(applyCommand(parseCommand("TTC 3.5"), c, &err));
+  CHECK_NEAR(c.rear.ttcS, 3.5, 1e-6);
+  CHECK(applyCommand(parseCommand("TTC 1"), c, &err) && applyCommand(parseCommand("TTC 6"), c, &err));
+  CHECK(!applyCommand(parseCommand("TTC 0.9"), c, &err));
+  CHECK(!applyCommand(parseCommand("TTC 6.5"), c, &err));
+  CHECK(applyCommand(parseCommand("RSNR 6"), c, &err) && c.rear.snr == 6);
+  CHECK(!applyCommand(parseCommand("RSNR 2"), c, &err));
+  CHECK(!applyCommand(parseCommand("RSNR 9"), c, &err));
+  CHECK(!applyCommand(parseCommand("RSNR 4.5"), c, &err));
+  CHECK(strstr(kHelpText, "RANGE") != nullptr && strstr(kHelpText, "TTC") != nullptr);
+
   CHECK(applyCommand(parseCommand("DEFAULTS"), c, &err));
+  CHECK(c.rear.rangeM == 15 && c.rear.minSpeedKmh == 5 && c.rear.snr == 4);
+  CHECK_NEAR(c.rear.ttcS, 2.5, 1e-6);
   CHECK_NEAR(c.radialLimitMps, 3.28, 1e-6);
   CHECK_NEAR(c.angleDeg, 45.0, 1e-6);
   CHECK_NEAR(c.heightM, 0.70, 1e-6);
@@ -931,9 +960,22 @@ static void testCommands() {
   bad = SpeedConfig::defaults();
   bad.model = static_cast<SpeedModel>(7);
   CHECK(!bad.isValid());
+  // 後方設定壞掉：整體不合法，但對地測速的欄位仍合法（讀回 NVS 時分開處理，不會清掉校正係數）
+  bad = SpeedConfig::defaults();
+  bad.rear.ttcS = NAN;
+  CHECK(!bad.isValid() && bad.speedFieldsValid() && !bad.rear.isValid());
+  bad.rear = RearConfig::defaults();
+  bad.rear.rangeM = 2;
+  CHECK(!bad.rear.isValid());
+  bad.rear = RearConfig::defaults();
+  bad.rear.snr = 9;
+  CHECK(!bad.rear.isValid());
 }
 
 // ------------------------------------------------------------ 輸出格式
+static RearFrame  rearFrame(std::initializer_list<RearTarget> targets);
+static RearTarget rearTarget(double distanceM, double speedKmh, bool approaching = true, int angle = 0);
+
 static bool hasToken(const char* line, const char* token) {
   const size_t n = strlen(token);
   for (const char* p = strstr(line, token); p; p = strstr(p + 1, token)) {
@@ -1029,10 +1071,345 @@ static void testTelemetry() {
   const char* cfgPrefix = "CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=3.28 RMIN=";
   CHECK(strncmp(cfgLine, cfgPrefix, strlen(cfgPrefix)) == 0);
   CHECK(hasToken(cfgLine, "FW=3.0.0"));
+  CHECK(hasToken(cfgLine, "RANGE=15") && hasToken(cfgLine, "RSPD=5") && hasToken(cfgLine, "TTC=2.5"));
+  CHECK(hasToken(cfgLine, "RSNR=4") && hasToken(cfgLine, "RDET=25"));
+  CHECK(strstr(cfgLine, "TEST=") == nullptr && strstr(cfgLine, "MINSPD=") == nullptr);  // 網頁用這兩個鍵判斷 2.x 舊韌體
   SpeedConfig wide = d;
   wide.angleDeg = 15, wide.heightM = 1.5f, wide.calibration = 1.9999f, wide.radarThreshold = 50, wide.wheelMm = 3000;
   wide.radialLimitMps = 20.0f;
-  CHECK(formatConfig(wide, "10.20.30-beta", cfgLine, sizeof(cfgLine)) > 0);
+  wide.rear.rangeM = 50, wide.rear.minSpeedKmh = 30, wide.rear.ttcS = 6.0f, wide.rear.snr = 8;
+  n = formatConfig(wide, "10.20.30-beta", cfgLine, sizeof(cfgLine));
+  CHECK(n > 0 && n <= 180 - 3);  // 一個 BLE 通知送得完
+  CHECK(hasToken(cfgLine, "RDET=60"));
+
+  // 後方來車
+  char rear[kRearLineMax];
+  RearSnapshot rs;
+  n = formatRear(rs, rear, sizeof(rear));
+  CHECK(n > 0 && strcmp(rear, "REAR ON=0\n") == 0);
+  rs.online             = true;
+  rs.frame              = 812;
+  n = formatRear(rs, rear, sizeof(rear));
+  CHECK(strcmp(rear, "REAR ON=1 RO=0 LV=0 D=-1.0 V=0.00 TTC=-1.0 HOLD=0 N=0 CNT=0 FN=812\n") == 0);
+  rs.receiveOnly        = true;
+  rs.state.level        = RearLevel::Caution;
+  rs.state.hasLead      = true;
+  rs.state.distanceM    = 12.43f;
+  rs.state.closingMps   = 4.1667f;
+  rs.state.ttcS         = 2.98f;
+  rs.state.alerts       = 3;
+  rs.hasFrame           = true;
+  rs.raw                = rearFrame({rearTarget(12, 15, true, -3), rearTarget(31, 40, false, 6)});
+  n = formatRear(rs, rear, sizeof(rear));
+  CHECK(strcmp(rear, "REAR ON=1 RO=1 LV=1 D=12.4 V=4.17 TTC=3.0 HOLD=0 N=2 CNT=3 FN=812 X=-3/12/15,6/31/-40\n") == 0);
+  // 保持中：沒有主要來車 → D/V/TTC 為「沒有」，但等級還在
+  rs.state.hasLead = false;
+  rs.state.holding = true;
+  rs.hasFrame      = false;
+  n = formatRear(rs, rear, sizeof(rear));
+  CHECK(hasToken(rear, "LV=1") && hasToken(rear, "HOLD=1") && hasToken(rear, "D=-1.0") && hasToken(rear, "N=0"));
+  CHECK(strstr(rear, " X=") == nullptr);
+  // 最長的一行：5 個目標、最大的數字
+  RearSnapshot big2 = rs;
+  big2.state.hasLead    = true;
+  big2.state.level      = RearLevel::Danger;
+  big2.state.distanceM  = 5000.0f;
+  big2.state.closingMps = 500.0f;
+  big2.state.ttcS       = 500.0f;
+  big2.state.alerts     = 4294967295UL;
+  big2.frame            = 4294967295UL;
+  big2.hasFrame         = true;
+  big2.raw              = rearFrame({rearTarget(255, 120, false, -90), rearTarget(255, 120, false, -90), rearTarget(255, 120, false, -90),
+                                     rearTarget(255, 120, false, -90), rearTarget(255, 120, false, -90)});
+  n = formatRear(big2, rear, sizeof(rear));
+  CHECK(n > 0 && n <= 180 - 3);
+  CHECK(hasToken(rear, "D=999.9") && hasToken(rear, "TTC=99.9"));
+}
+
+// ------------------------------------------------------------ 後方來車雷達 LD2451：協定
+// 餵一串位元組，回傳最後一個完成的資料框類型與完成的數量
+static int feedLD2451(LD2451FrameParser& p, const uint8_t* bytes, size_t n, LD2451FrameType* last = nullptr) {
+  int done = 0;
+  for (size_t i = 0; i < n; i++) {
+    const LD2451FrameType t = p.push(bytes[i]);
+    if (t != LD2451FrameType::None) {
+      done++;
+      if (last) *last = t;
+    }
+  }
+  return done;
+}
+
+static void testLD2451Protocol() {
+  printf("[LD2451Protocol]\n");
+  uint8_t cmd[ld2451::kMaxCommandFrame];
+
+  // 指令框：與三套開源驅動、協定文件相同的位元組
+  const uint8_t enable[] = {0xFD, 0xFC, 0xFB, 0xFA, 0x04, 0x00, 0xFF, 0x00, 0x01, 0x00, 0x04, 0x03, 0x02, 0x01};
+  const uint8_t ev[2]    = {0x01, 0x00};
+  size_t n = ld2451::buildCommand(ld2451::kCmdEnableConfig, ev, 2, cmd, sizeof(cmd));
+  CHECK(n == sizeof(enable) && memcmp(cmd, enable, n) == 0);
+  const uint8_t endCfg[] = {0xFD, 0xFC, 0xFB, 0xFA, 0x02, 0x00, 0xFE, 0x00, 0x04, 0x03, 0x02, 0x01};
+  n = ld2451::buildCommand(ld2451::kCmdEndConfig, nullptr, 0, cmd, sizeof(cmd));
+  CHECK(n == sizeof(endCfg) && memcmp(cmd, endCfg, n) == 0);
+  const uint8_t tv[4]     = {25, 1, 5, 1};
+  const uint8_t setTgt[]  = {0xFD, 0xFC, 0xFB, 0xFA, 0x06, 0x00, 0x02, 0x00, 25, 1, 5, 1, 0x04, 0x03, 0x02, 0x01};
+  n = ld2451::buildCommand(ld2451::kCmdSetTarget, tv, 4, cmd, sizeof(cmd));
+  CHECK(n == sizeof(setTgt) && memcmp(cmd, setTgt, n) == 0);
+  CHECK(ld2451::buildCommand(ld2451::kCmdSetTarget, tv, 4, cmd, 10) == 0);  // 空間不足
+
+  // 沒有目標時的空資料框（實機擷取，約每 1.4 秒一個）
+  LD2451FrameParser p;
+  const uint8_t idle[] = {0xF4, 0xF3, 0xF2, 0xF1, 0x00, 0x00, 0xF8, 0xF7, 0xF6, 0xF5};
+  LD2451FrameType type = LD2451FrameType::None;
+  CHECK(feedLD2451(p, idle, sizeof(idle), &type) == 1 && type == LD2451FrameType::Report && p.length() == 0);
+  RearFrame f;
+  CHECK(decodeLD2451Report(p.payload(), p.length(), f) && f.count == 0);
+
+  // 兩個目標：正後方偏左 3° 12 m 靠近 30 km/h；偏右 6° 31 m 遠離 40 km/h
+  const uint8_t two[] = {0xF4, 0xF3, 0xF2, 0xF1, 12, 0x00, 2, 1, 0x7D, 12, 1, 30, 50, 0x86, 31, 0, 40, 20,
+                         0xF8, 0xF7, 0xF6, 0xF5};
+  CHECK(feedLD2451(p, two, sizeof(two), &type) == 1 && type == LD2451FrameType::Report);
+  CHECK(decodeLD2451Report(p.payload(), p.length(), f));
+  CHECK(f.count == 2 && f.alarm == 1);
+  CHECK(f.targets[0].angleDeg == -3 && f.targets[0].distanceM == 12 && f.targets[0].approaching() && f.targets[0].speedKmh == 30);
+  CHECK(f.targets[0].snr == 50);
+  CHECK(f.targets[1].angleDeg == 6 && f.targets[1].distanceM == 31 && !f.targets[1].approaching() && f.targets[1].speedKmh == 40);
+
+  // 實機擷取到的位元錯誤：表尾 F6 F5 變成 F4 F1、表頭 F2 變成 F0 → 整筆丟掉，下一筆照常解出
+  const uint32_t badBefore = p.badFrames();
+  const uint8_t badTail[] = {0xF4, 0xF3, 0xF2, 0xF1, 0x00, 0x00, 0xF8, 0xF7, 0xF4, 0xF1};
+  CHECK(feedLD2451(p, badTail, sizeof(badTail)) == 0);
+  CHECK(p.badFrames() == badBefore + 1);
+  const uint8_t badHead[] = {0xF4, 0xF3, 0xF0, 0xF1, 0x00, 0x00, 0xF8, 0xF7, 0xF6, 0xF5};
+  CHECK(feedLD2451(p, badHead, sizeof(badHead)) == 0);
+  CHECK(feedLD2451(p, idle, sizeof(idle)) == 1);
+  // 表尾錯的那個位元組剛好是下一個表頭的開始：不能漏掉下一筆
+  const uint8_t glued[] = {0xF4, 0xF3, 0xF2, 0xF1, 0x00, 0x00, 0xF8, 0xF7, 0xF4, 0xF3, 0xF2, 0xF1, 0x00, 0x00, 0xF8, 0xF7, 0xF6, 0xF5};
+  CHECK(feedLD2451(p, glued, sizeof(glued)) == 1);
+  // 雜訊裡有表頭的第一個位元組、長度不合理（位元錯誤）→ 重新同步
+  const uint8_t junk[] = {0x00, 0xF4, 0x12, 0xFD, 0xFC, 0xF4, 0xF3, 0xF2, 0xF1, 0xFF, 0x00};
+  CHECK(feedLD2451(p, junk, sizeof(junk)) == 0);
+  CHECK(feedLD2451(p, idle, sizeof(idle)) == 1);
+
+  // 指令回覆：進入設定成功（協定版本 1、緩衝區 0x40）
+  const uint8_t ack[] = {0xFD, 0xFC, 0xFB, 0xFA, 0x08, 0x00, 0xFF, 0x01, 0x00, 0x00, 0x01, 0x00, 0x40, 0x00, 0x04, 0x03, 0x02, 0x01};
+  CHECK(feedLD2451(p, ack, sizeof(ack), &type) == 1 && type == LD2451FrameType::Ack);
+  LD2451Ack a;
+  CHECK(decodeLD2451Ack(p.payload(), p.length(), a) && a.command == 0xFF && a.ok && a.dataLen == 4);
+  const uint8_t nack[] = {0xFD, 0xFC, 0xFB, 0xFA, 0x04, 0x00, 0x02, 0x01, 0x01, 0x00, 0x04, 0x03, 0x02, 0x01};
+  CHECK(feedLD2451(p, nack, sizeof(nack)) == 1);
+  CHECK(decodeLD2451Ack(p.payload(), p.length(), a) && a.command == 0x02 && !a.ok);
+  // 讀回目標參數：25 m、只回報靠近、5 km/h、延遲 1 s
+  const uint8_t getTgt[] = {0xFD, 0xFC, 0xFB, 0xFA, 0x08, 0x00, 0x12, 0x01, 0x00, 0x00, 25, 1, 5, 1, 0x04, 0x03, 0x02, 0x01};
+  CHECK(feedLD2451(p, getTgt, sizeof(getTgt)) == 1);
+  CHECK(decodeLD2451Ack(p.payload(), p.length(), a) && a.command == 0x12 && a.dataLen == 4 && a.data[0] == 25 && a.data[1] == 1);
+
+  // 格式檢查（擋位元錯誤）
+  const uint8_t six[] = {6, 0};
+  CHECK(!decodeLD2451Report(six, 2, f));                          // 目標數 > 5
+  const uint8_t shortP[] = {2, 0, 0x80, 10, 1, 20, 9};
+  CHECK(!decodeLD2451Report(shortP, sizeof(shortP), f));          // 長度不夠 2 個目標
+  const uint8_t badDir[] = {1, 0, 0x80, 10, 2, 20, 9};
+  CHECK(!decodeLD2451Report(badDir, sizeof(badDir), f));          // 方向只能 0／1
+  const uint8_t fast[] = {1, 0, 0x80, 10, 1, 121, 9};
+  CHECK(!decodeLD2451Report(fast, sizeof(fast), f));              // 超過 120 km/h
+  const uint8_t wide[] = {1, 0, 0x05, 10, 1, 20, 9};              // 0x85 的最高位元掉成 0 → −123°
+  CHECK(!decodeLD2451Report(wide, sizeof(wide), f));
+  CHECK(!decodeLD2451Report(two, 1, f));
+  const uint8_t ackShort[] = {0xFF, 0x01, 0x00};
+  CHECK(!decodeLD2451Ack(ackShort, 3, a));
+}
+
+// ------------------------------------------------------------ 後方來車：警示判斷
+static RearFrame rearFrame(std::initializer_list<RearTarget> targets) {
+  RearFrame f;
+  for (const RearTarget& t : targets) {
+    if (f.count < kRearMaxTargets) f.targets[f.count++] = t;
+  }
+  return f;
+}
+
+static RearTarget rearTarget(double distanceM, double speedKmh, bool approaching, int angle) {
+  RearTarget t;
+  t.angleDeg  = static_cast<int8_t>(angle);
+  t.distanceM = static_cast<uint8_t>(lround(distanceM < 0 ? 0 : distanceM));  // LD2451 的距離是整數公尺
+  t.speedKmh  = static_cast<uint8_t>(lround(speedKmh));
+  t.direction = approaching ? kRearApproachByte : 0;
+  t.snr       = 30;
+  return t;
+}
+
+static void testRearThreat() {
+  printf("[RearThreat]\n");
+  const RearConfig cfg = RearConfig::defaults();
+  CHECK(cfg.rangeM == 15 && cfg.minSpeedKmh == 5 && cfg.snr == 4);
+  CHECK_NEAR(cfg.ttcS, 2.5, 1e-6);
+  CHECK(cfg.detectRangeM() == 25);
+  RearConfig far = cfg;
+  far.rangeM = 50;
+  CHECK(far.detectRangeM() == 60);
+  far.rangeM = 95;  // 不合法，但偵測距離仍夾在 100 以內
+  CHECK(far.detectRangeM() == 100);
+
+  // 1. 一台車以接近速度 20 km/h 從 24 m 追上來，到 2 m 時從視野消失（在旁邊超車）
+  {
+    RearThreat th;
+    const double v = 20 / 3.6;
+    uint32_t t = 1000;
+    double   d = 24.0;
+    bool sawSafeFar = false, sawCaution = false, sawDanger = false;
+    double cautionAt = -1, dangerAt = -1;
+    int changes = 0;
+    bool firstFrameSafe = false;
+    for (int i = 0; d > 2.0; i++, t += 100, d -= v * 0.1) {
+      th.onFrame(rearFrame({rearTarget(d, 20)}), t, cfg);
+      th.update(t, cfg);
+      if (th.consumeLevelChange()) changes++;
+      const RearState& s = th.state();
+      if (i == 0) firstFrameSafe = s.level == RearLevel::Safe && !s.hasLead;  // 單一筆還沒確認
+      if (d > 16 && s.level == RearLevel::Safe) sawSafeFar = true;
+      if (s.level == RearLevel::Caution && cautionAt < 0) cautionAt = d, sawCaution = true;
+      if (s.level == RearLevel::Danger && dangerAt < 0) dangerAt = d, sawDanger = true;
+    }
+    CHECK(firstFrameSafe);
+    CHECK(sawSafeFar && sawCaution && sawDanger);
+    CHECK(cautionAt <= 15.6 && cautionAt >= 14.0);            // 進入 15 m 才注意
+    CHECK(dangerAt <= 14.5 && dangerAt >= 12.5);              // 到達時間 ≤ 2.5 s（約 13.9 m）才危險
+    const RearState& s = th.state();
+    CHECK(s.hasLead && s.level == RearLevel::Danger);
+    CHECK_NEAR(s.closingMps, v, 0.15);
+    CHECK(s.ttcS > 0 && s.ttcS < 1.0);
+    // 車子不在視野了：資料框沒有目標 → 警示保持 1.5 秒
+    for (int i = 0; i < 5; i++, t += 100) {
+      th.onFrame(rearFrame({}), t, cfg);
+      th.update(t, cfg);
+    }
+    CHECK(th.state().level == RearLevel::Danger && th.state().holding && !th.state().hasLead);
+    CHECK(th.state().distanceM < 0 && th.state().ttcS < 0);
+    for (int i = 0; i < 20; i++, t += 100) th.update(t, cfg);
+    CHECK(th.state().level == RearLevel::Safe && !th.state().holding);
+    CHECK(th.consumeLevelChange() || changes > 0);
+    CHECK(th.state().alerts == 1);  // 一次警示（注意 → 危險不重複算）
+    CHECK(th.trendAgree() == 1 && th.trendDisagree() == 0);  // 距離趨勢與「靠近」一致
+  }
+
+  // 2. 單一筆雜訊（很近的目標）不會警示
+  {
+    RearThreat th;
+    th.onFrame(rearFrame({rearTarget(4, 30)}), 1000, cfg);
+    th.update(1000, cfg);
+    CHECK(th.state().level == RearLevel::Safe && !th.state().hasLead);
+    th.onFrame(rearFrame({}), 1100, cfg);
+    th.onFrame(rearFrame({}), 1200, cfg);
+    for (uint32_t t = 1200; t < 4000; t += 100) th.update(t, cfg);
+    CHECK(th.state().level == RearLevel::Safe && th.state().alerts == 0);
+  }
+
+  // 3. 遠離的目標、太慢、太遠的目標都不算
+  {
+    RearThreat th;
+    uint32_t t = 1000;
+    for (int i = 0; i < 10; i++, t += 100) {
+      th.onFrame(rearFrame({rearTarget(8, 30, false), rearTarget(10, 3), rearTarget(40, 60)}), t, cfg);
+      th.update(t, cfg);
+    }
+    CHECK(th.state().level == RearLevel::Safe && !th.state().hasLead && th.state().alerts == 0);
+  }
+
+  // 4. 很近（≤ 5 m）就算接近得慢也是危險
+  {
+    RearThreat th;
+    uint32_t t = 1000;
+    for (int i = 0; i < 3; i++, t += 100) th.onFrame(rearFrame({rearTarget(4, 6)}), t, cfg);
+    CHECK(th.state().level == RearLevel::Danger);
+  }
+
+  // 5. 位元錯誤造成單筆距離變近：不會讓追蹤跳過去（接近速度 10 km/h、真實 14 m → 注意；錯誤的 6 m 會變危險）
+  {
+    RearThreat th;
+    const double v = 10 / 3.6;
+    uint32_t t = 1000;
+    double   d = 15.0;
+    for (int i = 0; i < 4; i++, t += 100, d -= v * 0.1) th.onFrame(rearFrame({rearTarget(d, 10)}), t, cfg);
+    CHECK(th.state().level == RearLevel::Caution);
+    th.onFrame(rearFrame({rearTarget(6, 10)}), t, cfg);  // 14 → 6：位元錯誤
+    th.update(t, cfg);
+    CHECK(th.state().level == RearLevel::Caution);
+    CHECK(th.state().distanceM > 13.0);
+    t += 100, d -= v * 0.1;
+    th.onFrame(rearFrame({rearTarget(d, 10)}), t, cfg);
+    CHECK(th.state().level == RearLevel::Caution && th.state().distanceM > 13.0);
+  }
+
+  // 6. 第二台更快的車：連續兩筆一致才換成追蹤它
+  {
+    RearThreat th;
+    uint32_t t = 1000;
+    for (int i = 0; i < 5; i++, t += 100) th.onFrame(rearFrame({rearTarget(14, 8)}), t, cfg);
+    CHECK(th.state().level == RearLevel::Caution);
+    th.onFrame(rearFrame({rearTarget(14, 8), rearTarget(20, 60)}), t, cfg);  // 到達時間 1.2 s：主要威脅換人，第一筆先當跳值
+    CHECK(th.state().distanceM > 13.0 && th.state().distanceM < 14.5);
+    t += 100;
+    th.onFrame(rearFrame({rearTarget(14, 8), rearTarget(18.3, 60)}), t, cfg);
+    CHECK(th.state().distanceM > 17.5 && th.state().level == RearLevel::Danger);
+  }
+
+  // 7. 回報「靠近」但距離明確在變遠（方向判斷錯、或雷達設定沒寫進去）：排除，不再警示
+  {
+    RearThreat th;
+    uint32_t t = 1000;
+    double   d = 9.0;
+    for (int i = 0; i < 15; i++, t += 100, d += 0.4) {  // 4 m/s 變遠
+      th.onFrame(rearFrame({rearTarget(d, 15)}), t, cfg);
+      th.update(t, cfg);
+    }
+    CHECK(th.trendDisagree() == 1);
+    CHECK(!th.state().hasLead);
+    for (int i = 0; i < 20; i++, t += 100, d += 0.4) {
+      th.onFrame(rearFrame({rearTarget(d, 15)}), t, cfg);
+      th.update(t, cfg);
+    }
+    CHECK(th.state().level == RearLevel::Safe);
+    CHECK(th.trendDisagree() == 1);  // 同一台車只算一次
+  }
+
+  // 8. LD2451 沒目標時可能完全不送資料框：靠逾時放棄追蹤
+  {
+    RearThreat th;
+    uint32_t t = 1000;
+    for (int i = 0; i < 4; i++, t += 100) th.onFrame(rearFrame({rearTarget(12, 12)}), t, cfg);
+    CHECK(th.state().hasLead && th.state().level == RearLevel::Caution);
+    t += rear_tuning::kLeadLostMs + 50;
+    th.update(t, cfg);
+    CHECK(!th.state().hasLead && th.state().level == RearLevel::Caution && th.state().holding);
+    t += rear_tuning::kHoldMs + 50;
+    th.update(t, cfg);
+    CHECK(th.state().level == RearLevel::Safe);
+  }
+
+  // 9. 雷達離線 reset：警示清除、次數保留，等級變化回報一次
+  {
+    RearThreat th;
+    uint32_t t = 1000;
+    for (int i = 0; i < 3; i++, t += 100) th.onFrame(rearFrame({rearTarget(10, 20)}), t, cfg);
+    CHECK(th.consumeLevelChange());
+    CHECK(!th.consumeLevelChange());
+    th.reset();
+    CHECK(th.state().level == RearLevel::Safe && th.state().alerts == 1);
+    CHECK(th.consumeLevelChange());
+  }
+
+  // 10. 參數：RANGE 30 → 25 m 就注意；TTC 1.0 → 危險晚一點
+  {
+    RearConfig c2 = cfg;
+    c2.rangeM = 30;
+    c2.ttcS   = 1.0f;
+    RearThreat th;
+    uint32_t t = 1000;
+    for (int i = 0; i < 3; i++, t += 100) th.onFrame(rearFrame({rearTarget(25, 20)}), t, c2);
+    CHECK(th.state().level == RearLevel::Caution);
+  }
 }
 
 int main() {
@@ -1047,6 +1424,8 @@ int main() {
   testWheelSpeed();
   testCommands();
   testTelemetry();
+  testLD2451Protocol();
+  testRearThreat();
   printScenarioReport();
   printSimulationReport();
 

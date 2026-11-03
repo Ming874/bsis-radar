@@ -13,10 +13,37 @@ SpeedConfig SpeedConfig::defaults() {
   // 而且與 64 chirp × 0.95 ms 的 FFT 上限一致（docs/ALGORITHM.md §2）。先假設 3.28 並還原折疊；
   // 一旦量到明顯更大的值，韌體會自動調高（SpeedRadarApp::raiseRadialLimit）
   c.radialLimitMps = 3.28f;
+  c.rear           = RearConfig::defaults();
   return c;
 }
 
-bool SpeedConfig::isValid() const {
+RearConfig RearConfig::defaults() {
+  RearConfig r;
+  r.rangeM      = 15;    // 需求：後方 15 m 內有來車接近就警示
+  r.minSpeedKmh = 5;     // 低於步行速度的接近不算來車（跟車、等紅燈時車子慢慢靠近）
+  r.ttcS        = 2.5f;  // 騎士反應約 1～1.5 s 再加餘裕；汽車前方碰撞警示多在 2～2.4 s（docs/REAR_RADAR.md §5）
+  r.snr         = 4;     // LD2451 原廠預設
+  return r;
+}
+
+uint8_t RearConfig::detectRangeM() const {
+  const unsigned d = static_cast<unsigned>(rangeM) + limits::kRearDetectMarginM;
+  if (d < limits::kRearDetectLoM) return limits::kRearDetectLoM;
+  if (d > limits::kRearDetectHiM) return limits::kRearDetectHiM;
+  return static_cast<uint8_t>(d);
+}
+
+bool RearConfig::isValid() const {
+  if (rangeM < limits::kRangeLoM || rangeM > limits::kRangeHiM) return false;
+  if (minSpeedKmh < limits::kRearSpdLo || minSpeedKmh > limits::kRearSpdHi) return false;
+  if (!(ttcS >= limits::kTtcLoS && ttcS <= limits::kTtcHiS)) return false;
+  if (snr < limits::kRearSnrLo || snr > limits::kRearSnrHi) return false;
+  return true;
+}
+
+bool SpeedConfig::isValid() const { return speedFieldsValid() && rear.isValid(); }
+
+bool SpeedConfig::speedFieldsValid() const {
   // 用「不在範圍內就失敗」的寫法，NaN 也會被擋下
   if (!(angleDeg >= limits::kAngleLoDeg && angleDeg <= limits::kAngleHiDeg)) return false;
   if (!(heightM >= limits::kHeightLoM && heightM <= limits::kHeightHiM)) return false;

@@ -1,6 +1,6 @@
-# 韌體：BSIS 對地測速雷達（ESP32 + DFRobot C4001）
+# 韌體：BSIS 對地測速雷達（ESP32 + DFRobot C4001 + HLK-LD2451）
 
-讀取斜照路面的 C4001 毫米波雷達，估計自行車對地速度與里程，經藍牙（Nordic UART Service）與 USB 序列埠輸出。演算法見 [docs/ALGORITHM.md](../docs/ALGORITHM.md)，資料格式見 [docs/PROTOCOL.md](../docs/PROTOCOL.md)。
+讀取斜照路面的 C4001 毫米波雷達，估計自行車對地速度與里程；讀取朝後的 HLK-LD2451，判斷後方來車的警示等級。經藍牙（Nordic UART Service）與 USB 序列埠輸出。演算法見 [docs/ALGORITHM.md](../docs/ALGORITHM.md)、[docs/REAR_RADAR.md](../docs/REAR_RADAR.md)，資料格式見 [docs/PROTOCOL.md](../docs/PROTOCOL.md)。
 
 ## 燒錄
 
@@ -37,10 +37,13 @@ SpeedRadar/
 └─ src/
    ├─ core/      純邏輯（可在電腦上測試）
    │   ├─ GroundSpeedEstimator   有效性判斷 → 折疊還原 → 卡爾曼濾波 → 狀態機 → 里程
-   │   ├─ SpeedConfig            執行期參數（8 項）與範圍檢查
+   │   ├─ RearThreat             後方來車：候選 → 確認 → 追蹤 → 距離趨勢核對 → 分級 → 保持
+   │   ├─ RearFrame              LD2451 一個資料框（最多 5 個目標）
+   │   ├─ SpeedConfig            執行期參數（對地測速 8 項＋後方來車 4 項）與範圍檢查
    │   ├─ WheelSpeed             輪速感測器（參考值）：車速與圈數
    │   └─ RadarMeasurement       一筆資料框
-   ├─ drivers/   C4001Protocol（$DFDMD 解析）、C4001Radar（非阻塞狀態機）、WheelSensor（中斷）、StatusLed
+   ├─ drivers/   C4001Protocol（$DFDMD 解析）、C4001Radar（非阻塞狀態機）、WheelSensor（中斷）、StatusLed、
+   │             LD2451Protocol（二進位資料框、指令）、LD2451Radar（自動找鮑率、寫入設定、只接 TX 也能用）
    ├─ comm/      BleLink（NUS、依 MTU 分段、指令佇列）、Telemetry（輸出格式）、CommandParser
    ├─ storage/   SettingsStore（NVS 命名空間 speedRadar）
    └─ app/       SpeedRadarApp：主迴圈排程、指令處理、自動調高測速上限
@@ -52,6 +55,7 @@ SpeedRadar/
 C4001（10 Hz）→ C4001Radar → GroundSpeedEstimator.onFrame() → Telemetry → BleLink / USB（每筆資料框一行）
                                        ↑ update()：逾時（保持 → 靜止／中斷）、兩筆之間的狀態傳播、里程
 WheelSensor（中斷）→ WheelSpeed → Telemetry 的 W / DW
+LD2451 → LD2451Radar → RearThreat.onFrame() → Telemetry 的 REAR 行（有目標每 0.1 s、平常 0.5 s、等級改變立刻）
 BleLink / USB（指令）→ CommandParser → SettingsStore（NVS）→ 必要時重新設定雷達
 ```
 
@@ -113,17 +117,21 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 | `RTHR` | C4001 偵測門檻 | 5 |
 | `WHEEL` | 輪周長（mm） | 2105 |
 | `VMAX` | C4001 徑向測速上限（m/s） | 3.28 |
+| `RANGE` | 後方來車警示距離（m） | 15 |
+| `RSPD` | 後方來車最低接近速度（km/h，寫進 LD2451） | 5 |
+| `TTC` | 危險的到達時間（s） | 2.5 |
+| `RSNR` | LD2451 訊噪比門檻（寫進 LD2451） | 4 |
 
-範圍見 [PROTOCOL.md](../docs/PROTOCOL.md) §3。
+範圍見 [PROTOCOL.md](../docs/PROTOCOL.md) §3。後方來車的 4 項另外記 NVS 版本（`rver`），從 3.0 升級時原本的設定會保留。
 
 **編譯期**（`AppConfig.h`）：
-- 腳位：雷達 16／17、輪速感測器 27、LED 2。
+- 腳位：C4001 16／17、LD2451 25（接 LD2451 TX）／26（接 LD2451 RX，沒接也能用）、輪速感測器 27、LED 2。`kPinRearRx = -1` 表示沒有後方雷達。
 - 藍牙名稱 `BSIS-Speed`、MTU 247、心跳 250 ms。
 - `kAllowBleConfig`：設為 `false` 時，藍牙只能讀資料，修改參數必須用 USB。
 
 ## 測試
 
-`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol` 的純邏輯，共 318 項檢查：
+`tests/host_tests.cpp` 在電腦上編譯 `src/core`、`src/comm`、`src/drivers/C4001Protocol`、`src/drivers/LD2451Protocol` 的純邏輯，共 428 項檢查：
 
 - 資料框解析：含 C4001 實測的空白欄位。
 - 幾何：距離窗口、兩種換算模型。
@@ -132,7 +140,9 @@ Offline → Configuring → Verifying → Online ⇄ Probing
   - 剔除：外插框、窗口外、方向相反、離群值、停車時的雜散目標、DIR 設反。
   - 測速上限：截斷、折疊還原、自動調高的觸發、中斷後以先前速度還原。
   - 雜訊、加減速、雜散目標、回波斷續下的精度（模擬）。
-- 指令範圍、輸出格式（最長一行放得進緩衝區）、輪速感測器。
+- 指令範圍、輸出格式（最長一行放得進緩衝區、也放得進一個藍牙通知）、輪速感測器。
+- LD2451 協定：指令位元組、空資料框與多目標資料框、實機擷取到的位元錯誤、格式檢查。
+- 後方來車：來車接近（注意 → 危險 → 保持 → 安全）、單筆雜訊、遠離／太慢／太遠、5 m 內、位元錯誤的跳值、第二台車、方向判斷錯誤、資料框停止。
 
 最後會印出兩張模擬報表（情境表現、路面 × 模型），就是 ALGORITHM.md §9 的數據。
 
@@ -146,8 +156,9 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 
 ## 診斷工具
 
-`diagnostics/` 有三個工具：
+`diagnostics/` 有四個工具：
 - USB ⇄ C4001 直通程式：直接對雷達下指令。
+- `LD2451Probe`：自動找出 LD2451 接在哪兩支腳、用哪個鮑率，讀回設定並印出每個資料框。
 - `analyze.awk`：分析直通紀錄。
 - `analyze_ride.py`：分析網頁下載的騎乘 CSV，判斷測速上限、比較兩種模型、比對輪速。
 
@@ -155,5 +166,6 @@ Offline → Configuring → Verifying → Online ⇄ Probing
 
 ## 版本
 
-- 3.x：對地測速（本版）。
+- 3.1：加上後方來車（HLK-LD2451）。
+- 3.0：對地測速。
 - 2.x：後方來車偵測，最後一版是 2.4.0，commit `8a5c3b6`。可用 `git checkout 8a5c3b6 -- firmware` 取回。

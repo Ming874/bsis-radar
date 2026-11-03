@@ -30,8 +30,12 @@ const SHOTS = [
   { out: `${IMG}/phone-trips.png`, path: '?demo&screenshot#/trips', device: PHONE, waitS: 30, dark: false },
   { out: `${IMG}/phone-trip-detail.png`, path: '?demo&screenshot#/trips', device: PHONE, waitS: 6, dark: false, click: true },
   { out: `${IMG}/phone-calibrate.png`, path: '?demo&screenshot#/calibrate', device: PHONE, waitS: 6, dark: true },
-  { out: `${IMG}/phone-ride.png`, path: '?demo&screenshot#/ride', device: PHONE, waitS: 30, dark: true },
+  { out: `${IMG}/phone-ride.png`, path: '?demo&screenshot#/ride', device: PHONE, waitS: 36, dark: true },
   { out: `${IMG}/phone-ride-alert.png`, path: '?demo&screenshot#/ride', device: PHONE, waitS: 75, dark: true },
+  // 後方來車（示範模式的來車時刻表：約 19.5 秒注意、29.5 秒危險）
+  { out: `${IMG}/phone-rear-caution.png`, path: '?demo&screenshot#/speed', device: PHONE, waitS: 20, dark: true, scroll: '#rear-card' },
+  { out: `${IMG}/phone-ride-rear.png`, path: '?demo&screenshot#/ride', device: PHONE, waitS: 30, dark: true },
+  { out: `${IMG}/phone-rear-setup.png`, path: '?demo&screenshot#/calibrate', device: PHONE, waitS: 30, dark: false, scroll: '#rear' },
   { out: `${IMG}/phone-install.png`, path: '?demo&screenshot&install#/speed', device: PHONE, waitS: 6, dark: false, ua: ANDROID_UA },
   { out: `${IMG}/phone-settings.png`, path: '?demo&screenshot#/settings', device: PHONE, waitS: 5, dark: false },
   { out: `${IMG}/desktop-speed.png`, path: '?demo&screenshot#/speed', device: DESKTOP, waitS: 30, dark: true },
@@ -95,7 +99,14 @@ async function shoot(shot) {
   if (shot.ua) await send('Emulation.setUserAgentOverride', { userAgent: shot.ua });
   await send('Page.enable');
   await send('Page.navigate', { url: `${BASE}/${shot.path}` });
-  await sleep(shot.waitS * 1000);
+  if (shot.scroll) {
+    // 捲到指定的區塊（例如後方來車卡片），捲完再等一下讓版面穩定
+    await sleep(shot.waitS * 1000 - 800);
+    await send('Runtime.evaluate', { expression: `document.querySelector(${JSON.stringify(shot.scroll)})?.scrollIntoView({ block: 'start' })` });
+    await sleep(800);
+  } else {
+    await sleep(shot.waitS * 1000);
+  }
   if (shot.click) {
     await send('Runtime.evaluate', {
       expression: `[...document.querySelectorAll('button')].find((b) => b.textContent.includes('–') && b.textContent.includes('km'))?.click()`,

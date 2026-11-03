@@ -1,20 +1,24 @@
 /**
- * 【騎乘模式】手機裝在龍頭上時用的全螢幕儀表：只放對地速度（盡量大）、量測狀態與本次行程。
+ * 【騎乘模式】手機裝在龍頭上時用的全螢幕儀表：對地速度（盡量大）、後方來車、量測狀態與本次行程。
  *
  * - 進入時請瀏覽器全螢幕（Android Chrome、電腦；iPhone 不支援就只是蓋滿畫面），保持螢幕常亮
  * - 超速時整個畫面變紅（白字），眼角餘光就看得到；資料中斷時數字變成「—」並寫出原因
- * - 橫放時數字在左、行程在右
+ * - 後方來車：右邊的直條（車越近點越往上）；注意時直條與畫面邊框變黃、危險時變紅，
+ *   上方狀態列改成「後方來車 12 m」（優先於其他狀態）
+ * - 橫放時數字在左、行程在中、直條在右
  * - 按「結束」或返回鍵回到速度頁
  */
 import { useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { capabilities, uiStore, useOverspeed, useRadar, useSettings, useTrip } from '../../../application/container';
-import { describeState } from '../../../application/selectors';
+import { describeRear, describeState } from '../../../application/selectors';
+import { DEFAULT_REAR_CONFIG, rearDetectRange } from '../../../domain/protocol';
 import { averageMps } from '../../../domain/trip';
 import { formatClock, formatDistance, formatDuration, formatLimit, formatSpeed, speedUnitLabel } from '../../../domain/units';
 import { useNow } from '../../hooks/useNow';
 import { MinimizeIcon, StatusDot, cx, haptic, lockScroll } from '../../kit';
 import { closeRide } from '../../shell/tabs';
+import { RearStrip } from '../../widgets/RearRadar';
 
 function useFullscreen(): void {
   useEffect(() => {
@@ -47,6 +51,12 @@ export function RideMode() {
     })),
   );
   const trip = useTrip((s) => s.current);
+  const rs = useRadar(useShallow((s) => ({ connection: s.connection, rear: s.rear, rearStale: s.rearStale, config: s.config })));
+  const rearView = describeRear(rs);
+  const rearShown = rs.rear !== null || (rs.config !== null && rs.config.rear !== null);
+  const rear = rearView.live ? rs.rear : null;
+  const rearLevel = rear?.level ?? 'safe';
+  const rearCfg = rs.config?.rear ?? { ...DEFAULT_REAR_CONFIG, detectRangeM: rearDetectRange(DEFAULT_REAR_CONFIG.rangeM) };
   const now = useNow();
   const view = describeState(r.state);
   const speed = r.live ? r.speed : null;
@@ -58,6 +68,11 @@ export function RideMode() {
   else if (r.stale) status = { tone: 'bad', label: '資料中斷：確認 ESP32 有電、手機不要離太遠' };
   else if (r.status === 'reconnecting' || r.status === 'connecting') status = { tone: 'busy', label: '藍牙重新連線中' };
   else status = { tone: 'idle', label: '未連線：回到速度頁按「連線」' };
+  // 後方來車優先：注意／危險時狀態列改成來車資訊
+  const rearBanner =
+    rear && rearLevel !== 'safe'
+      ? `${rearLevel === 'danger' ? '後方來車！' : '後方有車'}${rear.distanceM !== null ? ` ${Math.round(rear.distanceM)} m` : '（通過中）'}`
+      : null;
 
   return (
     <div
@@ -67,13 +82,29 @@ export function RideMode() {
       className={cx(
         'fixed inset-0 z-[55] flex flex-col pt-[max(1rem,env(safe-area-inset-top))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] transition-colors duration-300',
         over ? 'bg-bad-solid text-white' : 'bg-bg text-ink',
+        // 後方來車：畫面邊框（實心、不是光暈），眼角餘光看得到
+        rearLevel === 'danger' && 'shadow-[inset_0_0_0_10px_var(--bad-solid)]',
+        rearLevel === 'danger' && over && 'shadow-[inset_0_0_0_10px_#ffffff]',
+        rearLevel === 'caution' && 'shadow-[inset_0_0_0_6px_var(--warn)]',
       )}
     >
       <div className="flex items-center justify-between gap-3">
-        <span className={cx('inline-flex min-w-0 items-center gap-2 text-subhead font-semibold', over ? 'text-white' : 'text-ink')}>
-          {!over && <StatusDot tone={status.tone} />}
-          <span className="truncate">{over ? '超過速限' : status.label}</span>
-        </span>
+        {rearBanner ? (
+          <span
+            aria-live="assertive"
+            className={cx(
+              'inline-flex min-w-0 items-center rounded-full px-3 py-1 text-headline font-bold',
+              over ? 'bg-white text-bad' : rearLevel === 'danger' ? 'bg-bad-solid text-white' : 'bg-warn text-white',
+            )}
+          >
+            <span className="num truncate">{rearBanner}</span>
+          </span>
+        ) : (
+          <span className={cx('inline-flex min-w-0 items-center gap-2 text-subhead font-semibold', over ? 'text-white' : 'text-ink')}>
+            {!over && <StatusDot tone={status.tone} />}
+            <span className="truncate">{over ? '超過速限' : status.label}</span>
+          </span>
+        )}
         <span className="flex shrink-0 items-center gap-3">
           <span className={cx('num text-subhead font-semibold', over ? 'text-white/80' : 'text-muted')}>{formatClock(now).slice(0, 5)}</span>
           <button
@@ -90,7 +121,8 @@ export function RideMode() {
         </span>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col items-stretch justify-center gap-6 landscape:flex-row landscape:items-center">
+      <div className="flex min-h-0 flex-1 gap-3 pt-3">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch justify-center gap-6 landscape:flex-row landscape:items-center">
         <div className="flex min-w-0 flex-1 flex-col items-center justify-center">
           <span
             aria-live="off"
@@ -127,6 +159,21 @@ export function RideMode() {
             </div>
           ))}
         </div>
+      </div>
+      {rearShown && (
+        <div className="flex w-14 shrink-0 flex-col items-center gap-1.5">
+          <span className={cx('text-caption font-semibold', over ? 'text-white/85' : 'text-muted')}>後方</span>
+          <RearStrip
+            data={rear ? { level: rear.level, distanceM: rear.distanceM, targets: rear.targets } : null}
+            rangeM={rearCfg.rangeM}
+            detectRangeM={rearCfg.detectRangeM}
+            live={rearView.live}
+            onRed={over}
+            className="min-h-0 flex-1"
+          />
+          <span className={cx('num text-caption', over ? 'text-white/85' : 'text-muted')}>{rearCfg.detectRangeM} m</span>
+        </div>
+      )}
       </div>
     </div>
   );

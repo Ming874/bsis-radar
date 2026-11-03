@@ -1,6 +1,7 @@
 /**
- * 【速度】主畫面：對地速度（大字）、量測狀態、超速警示、騎乘模式、本次行程、速度趨勢圖。
- * 騎車時手機裝在龍頭上：最重要的數字最大、其他資訊安靜地放在下面。超速時數字與外框變紅。
+ * 【速度】主畫面：對地速度（大字）、量測狀態、超速警示、後方來車、騎乘模式、本次行程、速度趨勢圖。
+ * 騎車時手機裝在龍頭上：最重要的數字最大、其他資訊安靜地放在下面。超速時數字與外框變紅；
+ * 後方來車卡片在注意時外框變黃、危險時變紅。
  */
 import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -35,6 +36,7 @@ import { openRide } from '../../shell/tabs';
 import { SpeedChart } from '../../widgets/SpeedChart';
 import { ConnectPanel } from '../common/ConnectPanel';
 import { DeviceNotices } from '../common/DeviceNotices';
+import { RearCard } from './RearCard';
 
 function SpeedHero() {
   const unit = useSettings((s) => s.speedUnit);
@@ -180,7 +182,14 @@ function TripCard() {
           value={trip.maxMps > 0 ? formatSpeed(trip.maxMps, unit) : DASH}
           unit={trip.maxMps > 0 ? speedUnitLabel(unit) : undefined}
           muted={trip.maxMps === 0}
-          sub={alertOn && !empty ? (trip.overspeedCount === 0 ? '未超過速限' : `超速 ${trip.overspeedCount} 次，共 ${formatDuration(trip.overspeedS)}`) : undefined}
+          sub={
+            [
+              alertOn && !empty ? (trip.overspeedCount === 0 ? '未超過速限' : `超速 ${trip.overspeedCount} 次，共 ${formatDuration(trip.overspeedS)}`) : null,
+              trip.rearAlerts > 0 ? `後方來車 ${trip.rearAlerts} 次` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ') || undefined
+          }
         />
       </div>
       <Button className="mt-5" block disabled={empty} onClick={() => setConfirm(true)}>
@@ -248,13 +257,19 @@ function MeasurementCard() {
   );
 }
 
+/** 有後方雷達功能的韌體（CFG 有 RANGE）或收過 REAR 行才顯示後方卡片；3.0 的韌體不顯示 */
+function useRearSupported(): boolean {
+  return useRadar((r) => r.rear !== null || (r.config !== null && r.config.rear !== null) || r.connection.status !== 'connected');
+}
+
 export function SpeedPage() {
   const connected = useRadar((r) => r.connection.status === 'connected');
+  const rear = useRearSupported();
   // 電腦版兩欄：左邊速度＋趨勢圖、右邊行程＋量測設定；手機一欄：速度 → 行程 → 趨勢圖
   const desktop = useMediaQuery(DESKTOP);
   return (
     <>
-      <PageHeader title="速度" description="C4001 毫米波雷達斜照路面量測的對地速度" />
+      <PageHeader title="速度" description="C4001 斜照路面量對地速度、LD2451 朝後偵測來車" />
       <DeviceNotices />
       {!connected && (
         <div className="mb-4">
@@ -265,9 +280,11 @@ export function SpeedPage() {
         <div className="grid gap-3 lg:gap-4">
           <SpeedHero />
           <QuickActions />
+          {!desktop && rear && <RearCard />}
           {desktop && <ChartCard />}
         </div>
         <div className="grid gap-4">
+          {desktop && rear && <RearCard />}
           <TripCard />
           {!desktop && <ChartCard />}
           <MeasurementCard />

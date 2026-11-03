@@ -1,11 +1,12 @@
 /**
- * 【校正】設定進度、安裝幾何、校正係數、精度驗證。
+ * 【校正】設定進度、安裝幾何、後方雷達、校正係數、精度驗證。
  */
 import { PageHeader } from '../../shell/PageHeader';
 import { DeviceNotices } from '../common/DeviceNotices';
 import { AgreementPanel } from './AgreementPanel';
 import { CalibrationPanel } from './CalibrationPanel';
 import { MountPanel } from './MountPanel';
+import { RearPanel } from './RearPanel';
 import { SetupChecklist } from './SetupChecklist';
 
 export function CalibratePage() {
@@ -17,6 +18,7 @@ export function CalibratePage() {
         <div className="grid gap-6">
           <SetupChecklist />
           <MountPanel />
+          <RearPanel />
         </div>
         <div className="grid gap-6">
           <CalibrationPanel />
