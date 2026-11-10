@@ -26,8 +26,10 @@
   - 超速警示（預設 25 km/h，只在網頁端）：規則在 `domain/overspeed.ts`（遲滯 1 km/h、進入 0.5 秒、解除 1 秒），依據與限制在 `docs/SPEED_ALERT.md`
 - `docs/proposal/`（計畫書 PDF，含組員學號）不進 git
 
-## Zeabur Deployment
-- 網址：https://bsis.mingchen.dev（只有這一個網址）
-- Project ID: 6ac0ef3493154e21e628668f（bsis-radar，Ming's Server）
-- Service ID: 6ac1119593154e21e62873bc（web；GitHub Ming874/bsis-radar 的 `main`，Root Directory `/web`）
-- **push 到 `main` 就會自動建置部署**，不要再用 `npx zeabur deploy` 上傳（會蓋掉 Git 設定）
+## 部署（Mac 上自架的 Zeabur，2026-11-06 起）
+- 網址：https://bsis.mingchen.dev（只有這一個網址）；Cloudflare DNS 是 CNAME 指向 Cloudflare Tunnel（Proxied），沒有公開的源站 IP
+- 跑在 Mac mini 的 Lima 虛擬機 `mac-a`（K3s ＋ Zeabur 開源版，也叫 Ming's Server，但不是 Zeabur 雲端），Zeabur 介面只能透過 Tailscale 開。舊的 Zeabur 雲端（東京）專案／服務 ID 都已失效，`npx zeabur` 指令也不再適用
+- Kubernetes namespace `bsis-radar`，服務 `web`：建置 GitHub Ming874/bsis-radar 的 `production` 分支、根目錄 `web/`，用 railpack
+- **部署：push 到 `main`（或合併 PR）**，CI（`.github/workflows/ci.yml`：網頁的 lint、測試、build，加上 secret scan）全部通過後，promote job 會把 `production` 快轉到該 commit，Mac 約 1 分鐘內建好 arm64 映像並換上。CI 沒過就不會上線，main 上失敗會發 Discord
+- 緊急上線（跳過 CI）：`git push origin <commit>:production`。退回：Zeabur 介面 → 服務 → 重新啟動與回滾，或 `kubectl -n bsis-radar set image deploy/web web=zot.zot.svc:5000/bsis-radar/web:<舊 tag>`
+- 日誌：Zeabur 介面，或 `limactl shell mac-a -- sudo k3s kubectl -n bsis-radar logs deploy/web`
