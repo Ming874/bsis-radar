@@ -8,13 +8,12 @@ import { AlertIcon, CheckCircleIcon, CircleIcon, ListGroup, Row, cx, type IconPr
 import { goTab } from '../../shell/tabs';
 import type { ComponentType } from 'react';
 
-type State = 'done' | 'todo' | 'warn' | 'optional';
+type State = 'done' | 'todo' | 'warn';
 
 const ICON: Record<State, { Icon: ComponentType<IconProps>; color: string }> = {
   done: { Icon: CheckCircleIcon, color: 'text-ok' },
   todo: { Icon: CircleIcon, color: 'text-faint' },
   warn: { Icon: AlertIcon, color: 'text-warn' },
-  optional: { Icon: CircleIcon, color: 'text-faint' },
 };
 
 function scrollToId(id: string) {
@@ -44,7 +43,6 @@ export function SetupChecklist() {
       connected: r.connection.status === 'connected',
       legacy: r.legacyFirmware,
       config: r.config,
-      wheel: r.telemetry ? r.telemetry.wheelDistanceM !== null : null,
     })),
   );
   const c = s.config;
@@ -66,12 +64,6 @@ export function SetupChecklist() {
         onClick={() => scrollToId('mount')}
       />
       <Item
-        state={!c ? 'todo' : c.calibration === 1 ? 'warn' : 'done'}
-        label="校正係數"
-        detail={!c ? '連線後讀取' : c.calibration === 1 ? '出廠值 1.0000，讀值通常偏低 10～20%' : `CAL ${c.calibration.toFixed(4)}`}
-        onClick={() => scrollToId('calibration')}
-      />
-      <Item
         state={!c ? 'todo' : c.radialLimitMps > 3.5 ? 'done' : 'warn'}
         label="雷達測速上限"
         detail={!c ? '連線後讀取' : c.radialLimitMps > 3.5 ? `VMAX ${c.radialLimitMps.toFixed(2)} m/s（已調高）` : `VMAX ${c.radialLimitMps.toFixed(2)} m/s，需實車驗收（上手文件 §10.1）`}
@@ -80,12 +72,6 @@ export function SetupChecklist() {
           // 換頁後再捲到「裝置參數」
           setTimeout(() => scrollToId('device'), 120);
         }}
-      />
-      <Item
-        state={s.wheel === null ? 'optional' : s.wheel ? 'done' : 'optional'}
-        label="輪速感測器（選用）"
-        detail={s.wheel ? '有資料，可做輪速校正與精度驗證' : '沒接也能用；接了可以驗證精度'}
-        onClick={() => scrollToId('agreement')}
       />
     </ListGroup>
   );

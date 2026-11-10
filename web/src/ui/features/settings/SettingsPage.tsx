@@ -95,13 +95,12 @@ function DisplayGroup() {
   );
 }
 
-/** 超速警示：速限與提示方式；可靠度受校正與雷達測速上限影響，有問題時在下方提示 */
+/** 超速警示：速限與提示方式；可靠度受雷達測速上限影響，有問題時在下方提示 */
 function AlertGroup() {
   const s = useSettings(useShallow((x) => ({ on: x.speedAlert, kmh: x.speedLimitKmh, sound: x.alertSound, vibrate: x.alertVibrate, unit: x.speedUnit })));
   const config = useRadar((r) => r.config);
   const update = settingsStore.getState().update;
   const unambiguousKmh = config ? mpsToKmh(unambiguousGroundMps(config.radialLimitMps, config.angleDeg, config.calibration)) : null;
-  const uncalibrated = config !== null && config.calibration === 1;
   const folding = unambiguousKmh !== null && unambiguousKmh < s.kmh;
   const hysteresisKmh = mpsToKmh(OVERSPEED_HYSTERESIS_MPS);
 
@@ -142,11 +141,6 @@ function AlertGroup() {
           </Button>
         </Row>
       </ListGroup>
-      {s.on && uncalibrated && (
-        <Notice tone="warn" title="尚未校正，實際超速時可能不會警示">
-          CAL = 1.0000 時讀值通常偏低 10～20%（實際 {s.kmh} km/h 約顯示 {(s.kmh * 0.8).toFixed(0)}～{(s.kmh * 0.9).toFixed(0)} km/h）。請先到「校正」頁完成距離校正。
-        </Notice>
-      )}
       {s.on && folding && unambiguousKmh !== null && (
         <Notice tone="info" title={`速限高於雷達不折疊的最高速度 ${unambiguousKmh.toFixed(1)} km/h`}>
           速限附近的讀值要靠韌體還原折疊，需要回波連續。若驗收發現 C4001 會截斷（上手文件 §10.1），超過 {unambiguousKmh.toFixed(1)} km/h 就會顯示「超出測速上限」，這時無法判斷是否超速。
@@ -231,7 +225,7 @@ function DeviceGroup() {
         </Row>
         <Row
           label="雷達測速上限 VMAX"
-          detail={`目前安裝與校正下約 ${(unambiguousGroundMps(value.radialLimitMps, config.angleDeg, config.calibration) * 3.6).toFixed(1)} km/h；量到更大的值時韌體會自動調高`}
+          detail={`目前安裝下約 ${(unambiguousGroundMps(value.radialLimitMps, config.angleDeg, config.calibration) * 3.6).toFixed(1)} km/h；量到更大的值時韌體會自動調高`}
         >
           <Stepper label="雷達測速上限" value={value.radialLimitMps} onChange={(v) => set({ radialLimitMps: v })} min={LIMITS.radialLimitMps.min} max={LIMITS.radialLimitMps.max} step={0.01} decimals={2} unit="m/s" width="w-12" />
         </Row>
@@ -269,13 +263,13 @@ function MaintenanceGroup() {
     <>
       <ListGroup title="維護" footer={connected ? undefined : '連線後才能使用。'}>
         <Row label="重新讀取設定" detail="從 ESP32 讀回目前所有參數" icon={RefreshIcon} disabled={!connected} onClick={() => send('get')} />
-        <Row label="恢復預設值" detail="安裝參數、校正係數都回到出廠值" icon={TrashIcon} destructive disabled={!connected} onClick={() => setConfirm('defaults')} />
+        <Row label="恢復預設值" detail="安裝參數、雷達設定都回到出廠值" icon={TrashIcon} destructive disabled={!connected} onClick={() => setConfirm('defaults')} />
         <Row label="重新啟動 ESP32" detail="約 5 秒後恢復；網頁會自動重新連線" icon={PowerIcon} destructive disabled={!connected} onClick={() => setConfirm('reboot')} />
       </ListGroup>
       <ConfirmSheet
         open={confirm === 'defaults'}
         title="恢復預設值"
-        message="所有參數都會回到預設值，包括校正係數。之後需要重新設定安裝幾何並校正。"
+        message="ESP32 上的所有參數都會回到預設值，之後需要重新設定安裝幾何。"
         confirmLabel="恢復預設"
         destructive
         onConfirm={() => send('defaults')}
@@ -333,16 +327,16 @@ function DataGroup() {
   };
   return (
     <>
-      <ListGroup title="資料（存在這支手機的瀏覽器裡）" footer="換手機、清除瀏覽器資料前先備份。匯入時設定會被取代，行程與校正紀錄會合併（不會重複）。">
-        <Row label="匯出備份" detail="設定、行程紀錄、校正紀錄存成一個 JSON 檔" icon={DownloadIcon} onClick={actions.exportBackup} />
+      <ListGroup title="資料（存在這支手機的瀏覽器裡）" footer="換手機、清除瀏覽器資料前先備份。匯入時設定會被取代，行程紀錄會合併（不會重複）。">
+        <Row label="匯出備份" detail="設定與行程紀錄存成一個 JSON 檔" icon={DownloadIcon} onClick={actions.exportBackup} />
         <Row label="匯入備份" detail="選擇之前匯出的 JSON 檔" icon={UploadIcon} onClick={() => file.current?.click()} />
-        <Row label="清除這台裝置的資料" detail="設定、行程、校正紀錄全部刪除（ESP32 上的參數不受影響）" icon={TrashIcon} destructive onClick={() => setConfirmReset(true)} />
+        <Row label="清除這台裝置的資料" detail="設定、行程紀錄全部刪除（ESP32 上的參數不受影響）" icon={TrashIcon} destructive onClick={() => setConfirmReset(true)} />
       </ListGroup>
       <input ref={file} type="file" accept="application/json,.json" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
       <ConfirmSheet
         open={confirmReset}
         title="清除這台裝置的資料"
-        message="設定會回到預設值，行程紀錄與校正紀錄都會刪除，無法復原。"
+        message="設定會回到預設值，行程紀錄會刪除，無法復原。"
         confirmLabel="全部清除"
         destructive
         onConfirm={actions.clearLocalData}

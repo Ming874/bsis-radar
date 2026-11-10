@@ -246,8 +246,7 @@ function MeasurementCard() {
         rows={[
           { label: '速度模型', value: s.model === null ? DASH : <span className="font-sans">{s.model === 'fixedAngle' ? '固定角度' : '距離幾何'}</span> },
           { label: '安裝角度 / 高度', value: s.angle === null || s.height === null ? DASH : `${s.angle.toFixed(1)}° / ${s.height.toFixed(2)} m` },
-          { label: '校正係數 CAL', value: s.cal === null ? DASH : s.cal.toFixed(4) },
-          { label: '不折疊的最高速度', hint: 'CAL × VMAX ÷ cos θ', value: unfoldKmh === null ? DASH : unfoldKmh.toFixed(1), unit: unfoldKmh === null ? undefined : 'km/h' },
+          { label: '不折疊的最高速度', hint: '由 VMAX 與俯角換算', value: unfoldKmh === null ? DASH : unfoldKmh.toFixed(1), unit: unfoldKmh === null ? undefined : 'km/h' },
           { label: '雷達資料框', value: s.frameRate === null ? DASH : s.frameRate.toFixed(1), unit: s.frameRate === null ? undefined : 'Hz' },
           { label: '雷達里程（開機起）', value: odo.value, unit: s.distance === null ? undefined : odo.unit },
           { label: '韌體', value: s.firmware ? `v${s.firmware}` : DASH },

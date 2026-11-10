@@ -36,7 +36,6 @@ export function MountPanel() {
   const pending = diffConfig(config, { ...config, ...value });
   const valid = inRange(value.angleDeg, LIMITS.angleDeg.min, LIMITS.angleDeg.max) && inRange(value.heightM, LIMITS.heightM.min, LIMITS.heightM.max);
   const geometryChanged = pending.some((c) => c.type === 'angle' || c.type === 'height');
-  const modelChanged = pending.some((c) => c.type === 'model');
   const preview = groundWindow(value.angleDeg, value.heightM);
 
   const apply = async () => {
@@ -77,7 +76,7 @@ export function MountPanel() {
             stack
             detail={
               value.model === 'fixedAngle'
-                ? '固定角度：v = CAL·|vr| / cos θ。文獻上的標準作法，不依賴雷達距離的準確度'
+                ? '固定角度：v = |vr| / cos θ。文獻上的標準作法，不依賴雷達距離的準確度'
                 : '距離幾何：每一筆用 sin α = h / 距離 算俯角。可降低路面材質造成的偏差，但需要準確的高度與距離（實驗性）'
             }
           >
@@ -93,10 +92,10 @@ export function MountPanel() {
             />
           </Row>
         </div>
-        {(geometryChanged || modelChanged) && (
+        {geometryChanged && (
           <div className="px-3 pb-3">
-            <Notice tone="info" flat title={modelChanged ? '換了速度模型，請重新校正' : '套用後 ESP32 會重新設定雷達'}>
-              {modelChanged ? '兩種模型的校正係數意義不同；套用後到下方重新做距離校正。' : '地面距離窗口會寫進 C4001，約 4 秒內沒有資料。角度改變後也建議重新校正。'}
+            <Notice tone="info" flat title="套用後 ESP32 會重新設定雷達">
+              地面距離窗口會寫進 C4001，約 4 秒內沒有資料。
             </Notice>
           </div>
         )}

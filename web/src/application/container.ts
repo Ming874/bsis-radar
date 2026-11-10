@@ -5,8 +5,7 @@
  */
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import { buildBackup, isCalibrationRun, parseBackup, type LastApplied } from '../domain/backup';
-import { checkCalibration, roundCalibration } from '../domain/calibration';
+import { buildBackup, parseBackup } from '../domain/backup';
 import { unambiguousGroundMps } from '../domain/protocol';
 import { rearSpeech } from '../domain/rear';
 import { isSavedTrip, type SavedTrip } from '../domain/trip';
@@ -18,7 +17,6 @@ import { loadJson, saveJson } from '../infrastructure/storage/localStore';
 import { DemoTransport, demoTrips } from '../infrastructure/transport/DemoTransport';
 import { WebBluetoothTransport, isWebBluetoothAvailable } from '../infrastructure/transport/WebBluetoothTransport';
 import { WakeLockManager } from '../infrastructure/wakeLock';
-import { createCalibrationStore, type CalibrationState, type CalibrationStore } from './calibrationStore';
 import { BRAVE_BLUETOOTH_HELP, describeAck } from './messages';
 import { createOverspeedStore, type OverspeedStore } from './overspeedStore';
 import { createRadarStore, type RadarStore } from './radarStore';
@@ -31,11 +29,12 @@ export { BRAVE_BLUETOOTH_HELP, pwaStore };
 
 const TRIPS_KEY = 'bsis.trips.v1';
 const CURRENT_TRIP_KEY = 'bsis.trip.current.v1';
-const CALIBRATION_KEY = 'bsis.calibration.v1';
+/** 網頁 3.1 以前的校正紀錄（網頁已經不做校正）：只在清除資料時一起刪掉 */
+const LEGACY_CALIBRATION_KEY = 'bsis.calibration.v1';
 
 /** 正在清除這台裝置的資料（重新載入前不要再存本次行程） */
 let clearing = false;
-const LOCAL_KEYS = [SETTINGS_STORAGE_KEY, TRIPS_KEY, CURRENT_TRIP_KEY, CALIBRATION_KEY];
+const LOCAL_KEYS = [SETTINGS_STORAGE_KEY, TRIPS_KEY, CURRENT_TRIP_KEY, LEGACY_CALIBRATION_KEY];
 
 const wakeLock = new WakeLockManager();
 const alertOutput = new AlertOutput();
@@ -85,15 +84,6 @@ export const tripStore: StoreApi<TripStore> = createTripStore({
   },
 });
 
-export const calibrationStore: StoreApi<CalibrationStore> = createCalibrationStore({
-  now,
-  load: () => {
-    const saved = loadJson<Partial<Pick<CalibrationState, 'runs' | 'lastApplied'>>>(CALIBRATION_KEY, {});
-    return { runs: Array.isArray(saved.runs) ? saved.runs.filter(isCalibrationRun) : [], lastApplied: saved.lastApplied ?? null };
-  },
-  save: (data) => saveJson(CALIBRATION_KEY, data),
-});
-
 /** 超速時依設定響兩聲、震動 */
 export const overspeedStore: StoreApi<OverspeedStore> = createOverspeedStore({
   alert: () => {
@@ -117,7 +107,6 @@ export const useRadar = <T>(selector: (s: RadarStore) => T): T => useStore(radar
 export const useSettings = <T>(selector: (s: SettingsStore) => T): T => useStore(settingsStore, selector);
 export const useToasts = <T>(selector: (s: ToastStore) => T): T => useStore(toastStore, selector);
 export const useTrip = <T>(selector: (s: TripStore) => T): T => useStore(tripStore, selector);
-export const useCalibration = <T>(selector: (s: CalibrationStore) => T): T => useStore(calibrationStore, selector);
 export const useOverspeed = <T>(selector: (s: OverspeedStore) => T): T => useStore(overspeedStore, selector);
 export const useRearAlert = <T>(selector: (s: RearAlertStore) => T): T => useStore(rearAlertStore, selector);
 export const usePwa = <T>(selector: (s: PwaState) => T): T => useStore(pwaStore, selector);
@@ -127,7 +116,6 @@ const toast = (...args: Parameters<ToastStore['push']>) => toastStore.getState()
 
 export interface ImportSummary {
   trips: number;
-  runs: number;
   skipped: number;
 }
 
@@ -151,19 +139,6 @@ export const actions = {
       const d = formatDistance(saved.distanceM);
       toast('success', '行程已儲存', `${d.value} ${d.unit}，在「行程」頁可以看速度曲線`);
     } else toast('info', '已開始新的行程', '不到 50 m 的行程不儲存');
-  },
-  /** 套用校正係數；回傳是否成功送出 */
-  applyCalibration: async (next: number): Promise<boolean> => {
-    const config = radarStore.getState().config;
-    if (!config) return false;
-    const value = roundCalibration(next);
-    if (checkCalibration(config.calibration, value) === 'outOfRange') {
-      toast('error', '校正係數超出範圍', '必須介於 0.5 ～ 2.0；請檢查安裝角度與雷達朝向');
-      return false;
-    }
-    const ok = await radarStore.getState().sendCommand({ type: 'calibration', factor: value });
-    if (ok) calibrationStore.getState().markApplied(config.calibration, value);
-    return ok;
   },
   /** 設定頁的「測試」：依目前設定響一次、震動一次（點擊當下呼叫，順便解鎖聲音） */
   previewAlert: async () => {
@@ -193,18 +168,13 @@ export const actions = {
   exportTraceCsv: (trip: SavedTrip) => {
     downloadText(`bsis-trip_${fileStamp(trip.startedAt)}.csv`, traceCsv(trip));
   },
-  /** 備份這台裝置上的設定、行程與校正紀錄 */
+  /** 備份這台裝置上的設定與行程 */
   exportBackup: () => {
-    const cal = calibrationStore.getState();
-    const file = buildBackup(
-      { settings: { ...settingsSnapshot(settingsStore.getState()) }, trips: tripStore.getState().trips, calibration: { runs: cal.runs, lastApplied: cal.lastApplied } },
-      now(),
-      __APP_VERSION__,
-    );
+    const file = buildBackup({ settings: { ...settingsSnapshot(settingsStore.getState()) }, trips: tripStore.getState().trips }, now(), __APP_VERSION__);
     downloadText(`bsis-backup_${fileStamp(now())}.json`, JSON.stringify(file), 'application/json');
-    toast('success', '已下載備份檔', `${file.trips.length} 筆行程、${file.calibration.runs.length} 趟校正`);
+    toast('success', '已下載備份檔', `${file.trips.length} 筆行程`);
   },
-  /** 清除這台裝置上的設定、行程與校正紀錄，然後重新載入 */
+  /** 清除這台裝置上的設定與行程，然後重新載入 */
   clearLocalData: () => {
     clearing = true;
     try {
@@ -214,16 +184,15 @@ export const actions = {
     }
     window.location.reload();
   },
-  /** 匯入備份：設定取代、行程與校正紀錄合併；檔案不對時回傳錯誤訊息 */
+  /** 匯入備份：設定取代、行程合併；檔案不對時回傳錯誤訊息 */
   importBackup: (text: string): ImportSummary | string => {
     const parsed = parseBackup(text);
     if (!parsed.ok) return parsed.error;
     const { backup } = parsed;
     settingsStore.getState().update(pickSettings(backup.settings));
     const trips = tripStore.getState().importTrips(backup.trips);
-    const runs = calibrationStore.getState().importData({ runs: backup.calibration.runs, lastApplied: backup.calibration.lastApplied as LastApplied | null });
-    toast('success', '已匯入備份', `新增 ${trips} 筆行程、${runs} 趟校正${parsed.skipped ? `；略過 ${parsed.skipped} 筆格式不對的資料` : ''}`);
-    return { trips, runs, skipped: parsed.skipped };
+    toast('success', '已匯入備份', `新增 ${trips} 筆行程${parsed.skipped ? `；略過 ${parsed.skipped} 筆格式不對的資料` : ''}`);
+    return { trips, skipped: parsed.skipped };
   },
 };
 
@@ -242,7 +211,7 @@ export const capabilities = {
 
 let started = false;
 
-/** 啟動背景服務：超速判斷、行程與校正統計、保持螢幕常亮、狀態提示（只執行一次） */
+/** 啟動背景服務：超速判斷、行程統計、保持螢幕常亮、狀態提示（只執行一次） */
 export function startServices(): void {
   if (started) return;
   started = true;
@@ -287,7 +256,6 @@ export function startServices(): void {
         overspeedStore.getState().onTelemetry(s.telemetry, kmhToMps(settings.speedLimitKmh), unambiguous);
       }
       tripStore.getState().onTelemetry(s.telemetry, overspeedStore.getState().active);
-      calibrationStore.getState().onTelemetry(s.telemetry, s.config?.calibration ?? null);
     }
     if (s.rear && s.rear !== prev.rear) {
       if (settingsStore.getState().rearAlert) rearAlertStore.getState().onRear(s.rear);

@@ -2,10 +2,10 @@
  * 【UI 層】手機的分頁列：浮在畫面底部的膠囊，選中的底色滑過去（百分比位移，五格一樣寬，不用量元素尺寸）。
  * - 正在打字（螢幕鍵盤開著）時收到下面去，位置讓給輸入框
  * - 點目前這一頁：捲回最上面
- * - 數據頁正在記錄 CSV、校正頁有一趟正在進行時，圖示旁有小點
+ * - 數據頁正在記錄 CSV 時，圖示旁有小點
  */
 import { useEffect, useState } from 'react';
-import { useCalibration, useRadar } from '../../application/container';
+import { useRadar } from '../../application/container';
 import { FOCUS_RING_INSET, cx, haptic } from '../kit';
 import { TABS, goTab, type Tab } from './tabs';
 
@@ -36,9 +36,8 @@ function useTyping(): boolean {
 export function MobileTabBar({ active }: { active: Tab }) {
   const typing = useTyping();
   const recording = useRadar((r) => r.recording.active);
-  const calibrating = useCalibration((c) => c.session !== null || c.pending !== null);
   const index = TABS.findIndex((t) => t.id === active);
-  const dot: Partial<Record<Tab, string>> = { data: recording ? 'bg-bad' : '', calibrate: calibrating ? 'bg-tint' : '' };
+  const dot: Partial<Record<Tab, string>> = { data: recording ? 'bg-bad' : '' };
 
   return (
     <nav

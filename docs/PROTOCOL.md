@@ -191,10 +191,9 @@ start_iso,end_iso,distance_m,moving_s,elapsed_s,avg_kmh,max_kmh,overspeed_count,
 **備份檔**（「設定 → 資料 → 匯出備份」，JSON）：
 
 ```json
-{ "app": "bsis-speed", "version": 1, "exportedAt": 1792000000000, "webVersion": "3.0.0",
+{ "app": "bsis-speed", "version": 1, "exportedAt": 1792000000000, "webVersion": "3.2.0",
   "settings": { "speedUnit": "kmh", "speedLimitKmh": 25, "...": "..." },
-  "trips": [ { "id": "…", "startedAt": 0, "endedAt": 0, "distanceM": 0, "movingS": 0, "maxMps": 0, "rearAlerts": 3, "trace": { "stepS": 1, "v": [512, -1, 530] } } ],
-  "calibration": { "runs": [ { "id": "…", "method": "distance", "radarM": 95.2, "referenceM": 100, "calibrationUsed": 1 } ], "lastApplied": null } }
+  "trips": [ { "id": "…", "startedAt": 0, "endedAt": 0, "distanceM": 0, "movingS": 0, "maxMps": 0, "rearAlerts": 3, "trace": { "stepS": 1, "v": [512, -1, 530] } } ] }
 ```
 
-`trace.v` 是 cm/s 的整數，`-1` 代表那一格沒有資料。匯入時逐筆檢查：格式不對的行程或校正紀錄略過；設定只取認得的欄位；行程與校正紀錄依 `id` 合併，不會重複。
+`trace.v` 是 cm/s 的整數，`-1` 代表那一格沒有資料。匯入時逐筆檢查：格式不對的行程略過；設定只取認得的欄位；行程依 `id` 合併，不會重複。網頁 3.1 以前的備份檔另有 `calibration`（校正紀錄），3.2 起網頁不做校正，匯入時忽略。

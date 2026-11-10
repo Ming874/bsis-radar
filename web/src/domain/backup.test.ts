@@ -21,26 +21,41 @@ describe('backup', () => {
       {
         settings: { speedUnit: 'kmh' },
         trips: [trip(1, { trace: { stepS: 1, v: [100, -1, 200] }, limitKmh: 25 })],
-        calibration: { runs: [{ id: 'r', method: 'distance', at: 1, radarM: 95, referenceM: 100, calibrationUsed: 1 }], lastApplied: null },
       },
       123,
-      '3.0.0',
+      '3.2.0',
     );
     const parsed = parseBackup(JSON.stringify(file));
     expect(parsed).toEqual({ ok: true, skipped: 0, backup: file });
   });
 
-  it('壞掉的行程與校正紀錄略過，其他照樣匯入', () => {
+  it('壞掉的行程略過，其他照樣匯入', () => {
     const parsed = parseBackup(
       JSON.stringify({
         app: BACKUP_APP,
         version: 1,
         trips: [trip(1), { id: 2 }, trip(3, { distanceM: Number.NaN })],
-        calibration: { runs: [{ id: 'x', method: 'laser' }] },
       }),
     );
     expect(parsed.ok && parsed.backup.trips.map((t) => t.id)).toEqual(['1']);
-    expect(parsed.ok && parsed.skipped).toBe(3);
+    expect(parsed.ok && parsed.skipped).toBe(2);
+  });
+
+  it('舊版（3.1 以前）備份檔的校正紀錄忽略，行程與設定照樣匯入', () => {
+    const parsed = parseBackup(
+      JSON.stringify({
+        app: BACKUP_APP,
+        version: 1,
+        webVersion: '3.1.0',
+        settings: { speedUnit: 'kmh' },
+        trips: [trip(1)],
+        calibration: { runs: [{ id: 'r', method: 'distance', at: 1, radarM: 95, referenceM: 100, calibrationUsed: 1 }, { id: 'x', method: 'laser' }], lastApplied: null },
+      }),
+    );
+    expect(parsed.ok && parsed.backup.trips.map((t) => t.id)).toEqual(['1']);
+    expect(parsed.ok && parsed.backup.settings).toEqual({ speedUnit: 'kmh' });
+    expect(parsed.ok && parsed.skipped).toBe(0);
+    expect(parsed.ok && 'calibration' in parsed.backup).toBe(false);
   });
 
   it('不是備份檔', () => {

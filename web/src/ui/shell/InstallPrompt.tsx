@@ -229,7 +229,7 @@ export function InstallPrompt() {
           <ul className="flex w-full flex-col gap-1.5 rounded-2xl bg-surface-2 px-4 py-3 text-left text-footnote text-ink">
             <Benefit>全螢幕顯示，騎乘時不會被網址列擋住</Benefit>
             <Benefit>沒有網路也打得開（連線雷達只需要藍牙）</Benefit>
-            {!env.ios && <Benefit>和瀏覽器共用資料：行程、設定、校正紀錄都在</Benefit>}
+            {!env.ios && <Benefit>和瀏覽器共用資料：行程、設定都在</Benefit>}
           </ul>
         )}
 

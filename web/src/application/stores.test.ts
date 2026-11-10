@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CsvRecorder } from '../infrastructure/storage/csv';
 import { Emitter, type TransportState } from '../infrastructure/transport/RadarTransport';
-import { createCalibrationStore } from './calibrationStore';
 import { ALERT_COOLDOWN_MS, createOverspeedStore } from './overspeedStore';
 import { createRadarStore, type BluetoothTransport } from './radarStore';
 import { createRearAlertStore } from './rearAlertStore';
@@ -181,7 +180,7 @@ describe('rearAlertStore', () => {
   });
 });
 
-describe('tripStore 與 calibrationStore', () => {
+describe('tripStore', () => {
   const tele = (at: number, dr: number, dw: number | null, uptimeS = 100) => ({
     radarOnline: true,
     state: 'tracking' as const,
@@ -263,40 +262,6 @@ describe('tripStore 與 calibrationStore', () => {
     expect(trip.getState().importTrips([one, one])).toBe(1);
     expect(trip.getState().importTrips([one])).toBe(0);
     expect(trip.getState().trips).toHaveLength(1);
-  });
-
-  it('距離校正：開始 → 結束 → 輸入實際距離 → 建議係數', () => {
-    const persisted: unknown[] = [];
-    const cal = createCalibrationStore({ now: () => 0, load: () => ({ runs: [], lastApplied: null }), save: (d) => persisted.push(d) });
-    cal.getState().start('distance', tele(0, 1000, null), 1);
-    cal.getState().onTelemetry(tele(100, 1047.5, null), 1);
-    expect(cal.getState().session?.radarM).toBeCloseTo(47.5, 6);
-    cal.getState().onTelemetry(tele(200, 1095, null), 1);
-    cal.getState().stop();
-    expect(cal.getState().pending?.radarM).toBeCloseTo(95, 6);
-    expect(cal.getState().acceptPending(20)).toMatch(/至少/); // 參考距離太短
-    expect(cal.getState().acceptPending(100)).toBeNull();
-    expect(cal.getState().runs).toHaveLength(1);
-    expect(cal.getState().combined?.calibration).toBeCloseTo(100 / 95, 6);
-    expect(persisted.length).toBeGreaterThan(0);
-    cal.getState().markApplied(1, 100 / 95);
-    expect(cal.getState().runs).toHaveLength(0);
-    expect(cal.getState().lastApplied?.to).toBeCloseTo(1.0526, 4);
-  });
-
-  it('輪速校正用輪速里程；期間韌體重開機則無效', () => {
-    const cal = createCalibrationStore({ now: () => 0, load: () => ({ runs: [], lastApplied: null }), save: () => undefined });
-    cal.getState().start('wheel', tele(0, 0, 10), 1.1);
-    cal.getState().onTelemetry(tele(100, 300, 316), 1.1);
-    cal.getState().stop();
-    expect(cal.getState().acceptPending()).toBeNull();
-    expect(cal.getState().runs[0]?.referenceM).toBeCloseTo(306, 6);
-
-    cal.getState().start('wheel', tele(200, 300, 316, 100), 1.1);
-    cal.getState().onTelemetry(tele(300, 5, 2, 3), 1.1); // 開機秒數變小
-    expect(cal.getState().session?.invalid).toMatch(/重新開機/);
-    cal.getState().stop();
-    expect(cal.getState().pending).toBeNull();
   });
 });
 

@@ -21,7 +21,7 @@ export interface TabItem {
 export const TABS: TabItem[] = [
   { id: 'speed', label: '速度', description: '對地速度與本次行程', Icon: GaugeIcon },
   { id: 'trips', label: '行程', description: '行程紀錄與速度曲線', Icon: RouteIcon },
-  { id: 'calibrate', label: '校正', description: '安裝幾何與校正係數', Icon: RulerIcon },
+  { id: 'calibrate', label: '校正', description: '安裝幾何與後方雷達', Icon: RulerIcon },
   { id: 'data', label: '數據', description: '原始資料框與記錄', Icon: ActivityIcon },
   { id: 'settings', label: '設定', description: '顯示、警示與裝置參數', Icon: SettingsIcon },
 ];
