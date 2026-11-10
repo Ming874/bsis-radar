@@ -160,4 +160,4 @@ npm run screenshots  # 重拍 docs/images 與 public/screenshots（要先 npm ru
 
 ## 部署
 
-部署在 Zeabur，連結 GitHub repo 的 `main` 分支、根目錄 `web/`：**push 到 `main` 就會自動建置並上線**。Service Worker 的檔案（`sw.js`）不需要為了新版改名：它每次有網路都會照 `precache.json` 存新版。
+部署在 Mac 上自架的 Zeabur，建置 GitHub repo 的 `production` 分支、根目錄 `web/`：**push 到 `main`，CI 全部通過後會把 `production` 快轉過去，Mac 自動建置並上線**（CI 沒過就不會上線，細節見 `CLAUDE.md`）。Service Worker 的檔案（`sw.js`）不需要為了新版改名：它每次有網路都會照 `precache.json` 存新版。

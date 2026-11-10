@@ -117,7 +117,7 @@ bsis-radar/
 │  ├─ release/             預先編譯的韌體（給 flash.bat）
 │  ├─ arduino.ps1          編譯、燒錄、監看、測試、輸出 release
 │  └─ flash.bat / .ps1     一鍵燒錄
-└─ web/                    網頁（React + TypeScript + Vite，PWA），push 到 main 自動部署
+└─ web/                    網頁（React + TypeScript + Vite，PWA），push 到 main、CI 通過後自動部署
 ```
 
 ## 版本
