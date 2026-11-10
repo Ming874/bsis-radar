@@ -30,11 +30,11 @@ export { BRAVE_BLUETOOTH_HELP, pwaStore };
 const TRIPS_KEY = 'bsis.trips.v1';
 const CURRENT_TRIP_KEY = 'bsis.trip.current.v1';
 /** 網頁 3.1 以前的校正紀錄（網頁已經不做校正）：只在清除資料時一起刪掉 */
-const LEGACY_CALIBRATION_KEY = 'bsis.calibration.v1';
+const LEGACY_CALIBRATION_ITEM = 'bsis.calibration.v1';
 
 /** 正在清除這台裝置的資料（重新載入前不要再存本次行程） */
 let clearing = false;
-const LOCAL_KEYS = [SETTINGS_STORAGE_KEY, TRIPS_KEY, CURRENT_TRIP_KEY, LEGACY_CALIBRATION_KEY];
+const LOCAL_KEYS = [SETTINGS_STORAGE_KEY, TRIPS_KEY, CURRENT_TRIP_KEY, LEGACY_CALIBRATION_ITEM];
 
 const wakeLock = new WakeLockManager();
 const alertOutput = new AlertOutput();
