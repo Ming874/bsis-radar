@@ -43,6 +43,23 @@ bool consistent(const float* values, uint8_t n, float* median) {
 
 bool tracking(SpeedState s) { return s == SpeedState::Tracking || s == SpeedState::Holding; }
 
+// 連續的資料框：間隔在合理範圍內，而且前後兩個間隔差不多（二階差分才有意義）
+bool continuousGaps(uint32_t gap1, uint32_t gap2) {
+  const auto ok = [](uint32_t g) { return g >= kFrameGapMinMs && g <= kFrameGapMaxMs; };
+  if (!ok(gap1) || !ok(gap2)) return false;
+  const uint32_t lo = gap1 < gap2 ? gap1 : gap2;
+  const uint32_t hi = gap1 < gap2 ? gap2 : gap1;
+  return 2 * hi <= 3 * lo;
+}
+
+// 一個方向正確、在窗口內的目標
+struct Candidate {
+  float   g;
+  float   depressionDeg;
+  int8_t  index;
+  uint8_t snr;
+};
+
 }  // namespace
 
 // ---------------------------------------------------------------- 幾何
@@ -52,27 +69,36 @@ GroundWindow groundWindow(const SpeedConfig& cfg) {
   GroundWindow w;
   w.minRangeM = cfg.heightM / sinf(steep * kDegToRad) - kRangeMarginM;
   w.maxRangeM = cfg.heightM / sinf(shallow * kDegToRad) + kRangeMarginM;
-  if (w.minRangeM < kRadarMinRangeM) w.minRangeM = kRadarMinRangeM;
-  if (w.maxRangeM > kRadarMaxRangeM) w.maxRangeM = kRadarMaxRangeM;
-  // 雷達一次只回報最強的一個目標：窗口外（例如後方的車）比路面強時會蓋掉路面，所以窗口也寫進雷達
-  w.radarMinM = w.minRangeM;
-  w.radarMaxM = w.maxRangeM < kRadarMinMaxRangeM ? kRadarMinMaxRangeM : w.maxRangeM;
+  if (w.minRangeM < 0.0f) w.minRangeM = 0.0f;
+  if (w.maxRangeM > kMaxRangeM) w.maxRangeM = kMaxRangeM;
+  // LD2451 的距離是整數公尺（四捨五入或無條件捨去都有可能，文件沒寫）：兩端都往外取整
+  w.minDistanceM = static_cast<uint8_t>(floorf(w.minRangeM));
+  w.maxDistanceM = static_cast<uint8_t>(ceilf(w.maxRangeM));
   return w;
 }
 
-bool groundFactor(const SpeedConfig& cfg, float rangeM, float* factor, float* depressionDeg) {
+// 雷達兩組接收天線左右排列（排針朝上），量到的角度 φ 是視線與「垂直於天線基線的平面」的夾角。
+// 視線 ℓ = cos φ (cos α · 前進方向 + sin α · 向下) + sin φ · 側向，所以 vr = v · cos φ · cos α
+bool groundFactor(const SpeedConfig& cfg, float rangeM, float azimuthDeg, float* factor, float* depressionDeg) {
+  if (!(fabsf(azimuthDeg) <= kMaxAzimuthDeg)) return false;
+  const float cosAz = cosf(azimuthDeg * kDegToRad);
   if (cfg.model == SpeedModel::FixedAngle) {
-    *factor        = 1.0f / cosf(cfg.angleDeg * kDegToRad);
+    *factor        = 1.0f / (cosf(cfg.angleDeg * kDegToRad) * cosAz);
     *depressionDeg = cfg.angleDeg;
     return true;
   }
-  // 距離幾何：平坦路面上，距離 r 的散射點俯角 α 滿足 sin α = h / r
+  // 距離幾何：平坦路面上距離 r 的散射點，cos φ · sin α = h / r
   if (!(rangeM > 0.0f)) return false;
-  const float s = cfg.heightM / rangeM;
+  const float s = cfg.heightM / (rangeM * cosAz);
   if (!(s > 0.0f) || s >= sinf(kGateMaxDeg * kDegToRad)) return false;  // 地面以下或幾乎正下方
-  *factor        = 1.0f / sqrtf(1.0f - s * s);
+  *factor        = 1.0f / (cosAz * sqrtf(1.0f - s * s));
   *depressionDeg = asinf(s) / kDegToRad;
   return true;
+}
+
+float radialMps(const RadarTarget& t) {
+  const float speed = static_cast<float>(t.speedKmh) / 3.6f;
+  return t.approaching() ? -speed : speed;
 }
 
 // ---------------------------------------------------------------- 狀態
@@ -84,14 +110,11 @@ void GroundSpeedEstimator::reset() {
   v_ = a_ = 0.0f;
   p00_ = p01_ = p11_ = 0.0f;
   kfMs_ = lastAcceptMs_ = 0;
-  lastKnownMps_ = 0.0f;
-  lostAtMs_     = 0;
   nis_ = 1.0f;
   prevGCount_ = d2Count_ = d2Next_ = 0;
   outlierCount_ = 0;
   acqCount_     = 0;
   beforeAcquire_ = SpeedState::Stopped;
-  hasPrevDetection_ = false;
   staticRun_ = 0;
   distanceM_ = pendingM_ = 0.0;
   odoStarted_ = false;
@@ -110,11 +133,7 @@ float GroundSpeedEstimator::sigmaMps() const { return tracking(state_) ? sqrtf(p
 
 uint8_t GroundSpeedEstimator::qualityPct() const {
   if (verdictCount_ == 0) return 0;
-  uint8_t n = 0;
-  for (uint8_t i = 0; i < verdictCount_; i++) {
-    n += verdicts_[i] == static_cast<uint8_t>(FrameVerdict::Accepted) || verdicts_[i] == static_cast<uint8_t>(FrameVerdict::Unfolded);
-  }
-  return static_cast<uint8_t>(n * 100 / verdictCount_);
+  return static_cast<uint8_t>(countVerdict(FrameVerdict::Accepted) * 100 / verdictCount_);
 }
 
 uint8_t GroundSpeedEstimator::countVerdict(FrameVerdict v) const {
@@ -136,12 +155,6 @@ void GroundSpeedEstimator::rememberVerdict(FrameVerdict v) {
 
 void GroundSpeedEstimator::enter(SpeedState s, uint32_t tMs) {
   if (s == state_) return;
-  if ((s == SpeedState::Lost || s == SpeedState::OverRange) && tracking(state_)) {
-    lastKnownMps_ = v_;  // 中斷前的速度：重新擷取時用來還原折疊
-    lostAtMs_     = tMs;
-  } else if (s == SpeedState::Stopped || s == SpeedState::NoRadar) {
-    lastKnownMps_ = 0.0f;
-  }
   state_        = s;
   stateSinceMs_ = tMs;
   if (!tracking(s)) {
@@ -157,8 +170,7 @@ void GroundSpeedEstimator::setRadarOffline(uint32_t tMs) {
   if (state_ == SpeedState::NoRadar) return;
   advance(tMs);
   commitPending(1.0);
-  acqCount_         = 0;
-  hasPrevDetection_ = false;
+  acqCount_ = 0;
   enter(SpeedState::NoRadar, tMs);
 }
 
@@ -257,9 +269,7 @@ float GroundSpeedEstimator::measurementVariance(float speed, const SpeedConfig& 
 // 追蹤中每一筆地面量測（不論有沒有通過閘門）都拿來估計雜訊：只用通過閘門的會低估雜訊，閘門越縮越窄
 void GroundSpeedEstimator::rememberGround(float g, uint32_t tMs) {
   if (prevGCount_ == 2) {
-    const uint32_t gap1 = prevGMs_[1] - prevGMs_[0];
-    const uint32_t gap2 = tMs - prevGMs_[1];
-    if (gap1 >= 70 && gap1 <= 130 && gap2 >= 70 && gap2 <= 130) {  // 只用連續的資料框（間隔約 100 ms）
+    if (continuousGaps(prevGMs_[1] - prevGMs_[0], tMs - prevGMs_[1])) {
       d2_[d2Next_] = fabsf(g - 2.0f * prevG_[1] + prevG_[0]);
       d2Next_ = static_cast<uint8_t>((d2Next_ + 1) % kNoiseWindow);
       if (d2Count_ < kNoiseWindow) d2Count_++;
@@ -273,21 +283,16 @@ void GroundSpeedEstimator::rememberGround(float g, uint32_t tMs) {
   prevGCount_++;
 }
 
-// ---------------------------------------------------------------- 每一筆資料框
-FrameResult GroundSpeedEstimator::onFrame(const RadarMeasurement& m, uint32_t tMs, const SpeedConfig& cfg) {
+// ---------------------------------------------------------------- 每一個資料框
+FrameResult GroundSpeedEstimator::onFrame(const RadarFrame& f, uint32_t tMs, const SpeedConfig& cfg) {
   frames_++;
   if (tracking(state_)) predict(tMs);
   advance(tMs);
   if (state_ == SpeedState::NoRadar) enter(SpeedState::Stopped, tMs);  // 剛上線：最可能是停著
 
   FrameResult r;
-  r.verdict = classify(m, cfg, tMs, r);
-
-  if (r.verdict == FrameVerdict::Accepted || r.verdict == FrameVerdict::Unfolded) {
-    const bool unfolded = r.verdict == FrameVerdict::Unfolded;
-    handleMeasurement(r.groundMps, tMs, cfg, r);  // 可能改判為離群值、擷取中，或停著時的靜止
-    if (unfolded && r.verdict == FrameVerdict::Accepted) r.verdict = FrameVerdict::Unfolded;
-  }
+  r.verdict = classify(f, cfg, r);
+  if (r.verdict == FrameVerdict::Accepted) handleMeasurement(r.groundMps, tMs, cfg, r);  // 可能改判為離群值、擷取中，或停著時的靜止
   if (r.verdict == FrameVerdict::Static) handleStatic(tMs);
   else staticRun_ = 0;
 
@@ -296,63 +301,84 @@ FrameResult GroundSpeedEstimator::onFrame(const RadarMeasurement& m, uint32_t tM
   return r;
 }
 
-FrameVerdict GroundSpeedEstimator::classify(const RadarMeasurement& m, const SpeedConfig& cfg, uint32_t tMs, FrameResult& out) {
-  if (m.targets == 0) {
-    hasPrevDetection_ = false;
-    return FrameVerdict::NoTarget;
-  }
-  // C4001 失去目標時會多送一筆速度、能量與上一筆完全相同的外插資料框（docs/ALGORITHM.md §2）
-  if (hasPrevDetection_ && m.speedMps == prevSpeed_ && m.energy == prevEnergy_) return FrameVerdict::Repeated;
-  hasPrevDetection_ = true;
-  prevSpeed_  = m.speedMps;
-  prevEnergy_ = m.energy;
-
-  // 任何目標的 |vr| 明顯超過 VMAX，就證明雷達的上限比設定高（會折疊的雷達不可能回報超過上限的值）
-  out.limitExceeded = fabsf(m.speedMps) > cfg.radialLimitMps + kVmaxRaiseMarginMps;
+// 從一個資料框挑出代表路面的量測。LD2451 一次回報最多 5 個移動中的目標（C4001 只有最強的一個）：
+// 路面是連續的散射面，常常同時出現好幾個距離、角度不同的點，各自換算後應該差不多；
+// 其中混了一台車或路邊晃動的東西時，取中位數就不會被帶偏
+FrameVerdict GroundSpeedEstimator::classify(const RadarFrame& f, const SpeedConfig& cfg, FrameResult& out) const {
+  const uint8_t n = f.count < kRadarMaxTargets ? f.count : kRadarMaxTargets;
+  if (n == 0) return FrameVerdict::NoTarget;
 
   const GroundWindow w = groundWindow(cfg);
-  if (m.rangeM < w.minRangeM || m.rangeM > w.maxRangeM) return FrameVerdict::OutOfGate;
+  Candidate ground[kRadarMaxTargets];
+  uint8_t   nGround   = 0;
+  int8_t    wrong     = -1;  // 方向相反的目標中訊噪比最高的
+  float     wrongG    = 0.0f;
+  float     wrongDep  = 0.0f;
+  int8_t    still     = -1;  // 靜止的目標
+  int8_t    strongest = -1;  // 全部目標中訊噪比最高的（窗口外時顯示用）
 
-  float factor = 1.0f, depression = cfg.angleDeg;
-  if (!groundFactor(cfg, m.rangeM, &factor, &depression)) return FrameVerdict::OutOfGate;
+  for (uint8_t i = 0; i < n; i++) {
+    const RadarTarget& t   = f.targets[i];
+    const int8_t       idx = static_cast<int8_t>(i);
+    if (strongest < 0 || t.snr > f.targets[strongest].snr) strongest = idx;
+    if (t.distanceM < w.minDistanceM || t.distanceM > w.maxDistanceM) continue;
+    float factor = 1.0f, depression = cfg.angleDeg;
+    if (!groundFactor(cfg, static_cast<float>(t.distanceM), static_cast<float>(t.angleDeg), &factor, &depression)) continue;
 
-  // 沿預期方向的徑向速度：往前騎時，朝後的雷達看到地面遠離（DIR = +1 時 C4001 回報正值）
-  const float limit = cfg.radialLimitMps;
-  float along    = static_cast<float>(cfg.direction) * m.speedMps;
-  bool  unfolded = false;
-  // 折疊還原：若 C4001 把超過上限的都卜勒折到另一側（例如上限 3.28 時 3.6 報成 −2.96），
-  // 追蹤中且預測的徑向速度已接近上限時，取最接近預測的解釋（與 TI gtrack 的 unrollRadialVelocity 相同概念）。
-  // 訊號剛中斷時沒有預測，改用中斷前的速度（10 秒內有效；停車會先經過「靜止」而清掉）
-  const bool afterLoss = state_ == SpeedState::Lost || state_ == SpeedState::OverRange ||
-                         (state_ == SpeedState::Acquiring &&
-                          (beforeAcquire_ == SpeedState::Lost || beforeAcquire_ == SpeedState::OverRange));
-  float prior = -1.0f;
-  if (tracking(state_)) prior = v_;
-  else if (afterLoss && lastKnownMps_ > 0.0f && tMs - lostAtMs_ < kLostPriorMs) prior = lastKnownMps_;
-  if (prior > 0.0f) {
-    const float predicted = prior / (cfg.calibration * factor);
-    if (predicted > 0.5f * limit) {
-      float best = along, bestErr = fabsf(along - predicted);
-      for (int n = 1; n <= 2; n++) {
-        const float c = along + 2.0f * limit * n;
-        if (fabsf(c - predicted) < bestErr) {
-          best    = c;
-          bestErr = fabsf(c - predicted);
-        }
-      }
-      unfolded = best != along;
-      along    = best;
+    // 沿預期方向的徑向速度：往前騎時，朝後的雷達看到地面遠離（DIR = +1）
+    const float along = static_cast<float>(cfg.direction) * radialMps(t);
+    if (fabsf(along) < kStaticRadialMps) {
+      if (still < 0 || t.snr > f.targets[still].snr) still = idx;
+      continue;
+    }
+    const float g = cfg.calibration * fabsf(along) * factor;
+    if (along > 0.0f) {
+      ground[nGround++] = {g, depression, idx, t.snr};
+    } else if (wrong < 0 || t.snr > f.targets[wrong].snr) {
+      wrong    = idx;
+      wrongG   = g;
+      wrongDep = depression;
     }
   }
-  if (fabsf(along) < kStaticRadialMps) return FrameVerdict::Static;
 
-  out.hasGround     = true;
-  out.depressionDeg = depression;
-  out.groundMps     = cfg.calibration * fabsf(along) * factor;
-  if (along < 0.0f) return FrameVerdict::WrongDirection;
-  // 原始值正好在上限附近：可能被截斷、也可能正在折疊，這一筆不可靠
-  if (fabsf(fabsf(m.speedMps) - limit) < kLimitMarginMps) return FrameVerdict::AtLimit;
-  return unfolded ? FrameVerdict::Unfolded : FrameVerdict::Accepted;
+  if (nGround > 0) {
+    // 依 g 排序（插入排序，最多 5 個）取中位數；偶數個時取中間兩個的平均，代表目標取訊噪比較高的那個
+    for (uint8_t i = 1; i < nGround; i++) {
+      const Candidate key = ground[i];
+      uint8_t         j   = i;
+      while (j > 0 && ground[j - 1].g > key.g) {
+        ground[j] = ground[j - 1];
+        j--;
+      }
+      ground[j] = key;
+    }
+    const Candidate* pick  = &ground[nGround / 2];
+    float            value = pick->g;
+    if (nGround % 2 == 0) {
+      const Candidate& lower = ground[nGround / 2 - 1];
+      value = 0.5f * (lower.g + pick->g);
+      if (lower.snr > pick->snr) pick = &lower;
+    }
+    out.target        = pick->index;
+    out.candidates    = nGround;
+    out.hasGround     = true;
+    out.groundMps     = value;
+    out.depressionDeg = pick->depressionDeg;
+    return FrameVerdict::Accepted;
+  }
+  if (wrong >= 0) {
+    out.target        = wrong;
+    out.hasGround     = true;
+    out.groundMps     = wrongG;
+    out.depressionDeg = wrongDep;
+    return FrameVerdict::WrongDirection;
+  }
+  if (still >= 0) {
+    out.target = still;
+    return FrameVerdict::Static;
+  }
+  out.target = strongest;
+  return FrameVerdict::OutOfGate;
 }
 
 void GroundSpeedEstimator::handleMeasurement(float g, uint32_t tMs, const SpeedConfig& cfg, FrameResult& out) {
@@ -381,7 +407,7 @@ void GroundSpeedEstimator::handleMeasurement(float g, uint32_t tMs, const SpeedC
     // 里程用量測本身積分：濾波後速度在急煞時會落後，直接積分會多算距離（docs/ALGORITHM.md §6.5）。
     // 兩筆量測之間已經用預測速度積分過，把這一筆的創新 × 資料框間隔加回去，這段就等於用量測值積分
     const uint32_t gapMs = tMs - lastAcceptMs_;
-    const double   dt    = (gapMs > 150 ? 100 : gapMs) / 1000.0;
+    const double   dt    = (gapMs > kFrameGapMaxMs ? kNominalFrameMs : gapMs) / 1000.0;
     if (state_ == SpeedState::Tracking) distanceM_ += nu * dt;
     else pendingM_ += nu * dt;
     correct(g, r);
@@ -416,7 +442,7 @@ void GroundSpeedEstimator::handleStatic(uint32_t tMs) {
   if (staticRun_ < 255) staticRun_++;
   const bool slow  = tracking(state_) && v_ < kStopMps && staticRun_ >= 2;
   const bool acq   = state_ == SpeedState::Acquiring && staticRun_ >= 2;
-  const bool blind = (state_ == SpeedState::Lost || state_ == SpeedState::OverRange) && staticRun_ >= 5;
+  const bool blind = state_ == SpeedState::Lost && staticRun_ >= 5;
   if (slow || acq || blind) {
     commitPending(0.5);
     acqCount_ = 0;
@@ -445,7 +471,7 @@ void GroundSpeedEstimator::acquire(float g, uint32_t tMs) {
 
   // 確認在動：擷取期間（第一筆之前約一個資料框起）走過的距離補回里程
   const uint32_t firstMs = acq_[acqCount_ - kAcquireFrames].tMs;
-  distanceM_ += median * ((tMs - firstMs) / 1000.0 + 0.1);
+  distanceM_ += median * ((tMs - firstMs + kNominalFrameMs) / 1000.0);
   const float spread = fmaxf(0.3f, 0.1f * median);
   startTracking(median, spread * spread, tMs);
 }
@@ -488,8 +514,7 @@ void GroundSpeedEstimator::update(uint32_t tMs) {
         enter(SpeedState::Stopped, tMs);
       } else if (since >= kLostAfterMs) {
         commitPending(1.0);
-        // 失去回波前大多是「接近上限」的資料框 = 雷達截斷在上限（速度超過可量範圍），否則是一般的訊號中斷
-        enter(countVerdict(FrameVerdict::AtLimit) >= kVerdictWindow / 4 ? SpeedState::OverRange : SpeedState::Lost, tMs);
+        enter(SpeedState::Lost, tMs);
       }
       break;
     }

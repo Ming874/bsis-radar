@@ -6,7 +6,6 @@
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { buildBackup, parseBackup } from '../domain/backup';
-import { unambiguousGroundMps } from '../domain/protocol';
 import { rearSpeech } from '../domain/rear';
 import { isSavedTrip, type SavedTrip } from '../domain/trip';
 import { fileStamp, formatDistance, kmhToMps } from '../domain/units';
@@ -250,11 +249,7 @@ export function startServices(): void {
   radarStore.subscribe((s, prev) => {
     if (s.telemetry && s.telemetry !== prev.telemetry) {
       const settings = settingsStore.getState();
-      if (settings.speedAlert) {
-        const c = s.config;
-        const unambiguous = c ? unambiguousGroundMps(c.radialLimitMps, c.angleDeg, c.calibration) : null;
-        overspeedStore.getState().onTelemetry(s.telemetry, kmhToMps(settings.speedLimitKmh), unambiguous);
-      }
+      if (settings.speedAlert) overspeedStore.getState().onTelemetry(s.telemetry, kmhToMps(settings.speedLimitKmh));
       tripStore.getState().onTelemetry(s.telemetry, overspeedStore.getState().active);
     }
     if (s.rear && s.rear !== prev.rear) {

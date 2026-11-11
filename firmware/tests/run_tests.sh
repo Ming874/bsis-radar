@@ -9,7 +9,6 @@ g++ -std=c++14 -Wall -Wextra -O1 -I"$SRC" \
   "$SRC/core/GroundSpeedEstimator.cpp" \
   "$SRC/core/WheelSpeed.cpp" \
   "$SRC/core/RearThreat.cpp" \
-  "$SRC/drivers/C4001Protocol.cpp" \
   "$SRC/drivers/LD2451Protocol.cpp" \
   "$SRC/comm/CommandParser.cpp" \
   "$SRC/comm/Telemetry.cpp" \

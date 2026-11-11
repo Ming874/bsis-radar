@@ -30,11 +30,14 @@ void SpeedRadarApp::begin() {
   config_ = store_.load();
   console_.print("[設定] ");
   sendConfig(Channel::Usb);
+  if (store_.migratedFromC4001()) {
+    console_.println("[設定] 從 3.x（C4001）升級：沿用安裝角度、高度、朝向、輪周長；換了測速雷達，校正係數回到 1，請重新校正");
+  }
 
   ble_.begin(bleConfig_);  // 先開藍牙：雷達還沒接好也能用手機確認 ESP32 有在跑
   console_.printf("[藍牙] 已開始廣播：%s\n", bleConfig_.deviceName);
 
-  applyRadarDetection(millis());  // 地面距離窗口與門檻：begin() 前只記下來，begin() 時一起寫入
+  applyRadarDetection(millis());  // 偵測設定：begin() 前只記下來，begin() 時一起寫入
   radar_.begin(millis());
   applyRearDetection(millis());   // 後方雷達的偵測距離、最低速度、訊噪比
   rear_.begin(millis());
@@ -67,34 +70,23 @@ void SpeedRadarApp::pumpRadar(uint32_t nowMs) {
   }
   radarWasOnline_ = online;
 
-  RadarMeasurement m;
-  while (radar_.readMeasurement(m)) {
-    lastResult_  = estimator_.onFrame(m, nowMs, config_);
-    if (lastResult_.limitExceeded) raiseRadialLimit(fabsf(m.speedMps));
-    lastRaw_     = m;
+  RadarFrame f;
+  while (radar_.readFrame(f)) {
+    lastResult_  = estimator_.onFrame(f, nowMs, config_);
+    lastRaw_     = f;
     hasFrame_    = true;
     lastFrameMs_ = nowMs;
-    publishTelemetry(nowMs);  // 每一筆資料框送一行：網頁才能完整記錄
+    publishTelemetry(nowMs);  // 每一個資料框送一行：網頁才能完整記錄
   }
   if (hasFrame_ && nowMs - lastFrameMs_ > kFrameStaleMs) hasFrame_ = false;
 }
 
-// 量到明顯超過 VMAX 的徑向速度，證明 C4001 的上限比設定高（會折疊的雷達不可能回報超過上限的值）：
-// 先調到資料框說明的 10 m/s，量到更大再往上；存進 NVS 並通知網頁（docs/ALGORITHM.md §2）
-void SpeedRadarApp::raiseRadialLimit(float observedMps) {
-  float next = observedMps < 10.0f ? 10.0f : ceilf(observedMps * 1.1f);
-  if (next > limits::kVmaxHi) next = limits::kVmaxHi;
-  if (next <= config_.radialLimitMps) return;
-  console_.printf("[雷達] 量到徑向速度 %.2f m/s，超過 VMAX %.2f：雷達的測速上限比設定高，自動把 VMAX 調為 %.1f\n",
-                  observedMps, config_.radialLimitMps, next);
-  config_.radialLimitMps = next;
-  store_.save(config_);
-  broadcastConfig();
-}
-
+// 測速雷達：偵測距離用最小值、靠近遠離都回報（方向與地面窗口由 ESP32 判斷），只有訊噪比門檻可調。
+// 安裝角度、高度只影響 ESP32 的換算與窗口，改了不必重寫雷達
 void SpeedRadarApp::applyRadarDetection(uint32_t nowMs) {
-  const GroundWindow w = groundWindow(config_);
-  radar_.setDetection({w.radarMinM, w.radarMaxM, config_.radarThreshold}, nowMs);
+  radar_.setDetection({ground_tuning::kRadarDetectRangeM, ld2451::kDirectionBoth, ground_tuning::kRadarMinSpeedKmh,
+                       config_.radarSnr},
+                      nowMs);
 }
 
 // ---------------------------------------------------------------- 後方來車
@@ -109,7 +101,7 @@ void SpeedRadarApp::pumpRear(uint32_t nowMs) {
   }
   rearWasOnline_ = online;
 
-  RearFrame f;
+  RadarFrame f;
   while (rear_.readFrame(f)) {
     threat_.onFrame(f, nowMs, config_.rear);
     lastRearFrame_   = f;
@@ -137,7 +129,9 @@ void SpeedRadarApp::pumpRear(uint32_t nowMs) {
 }
 
 void SpeedRadarApp::applyRearDetection(uint32_t nowMs) {
-  rear_.setDetection({config_.rear.detectRangeM(), config_.rear.minSpeedKmh, config_.rear.snr}, nowMs);
+  // 只回報靠近：路面、路樹、被超越的車都在遠離，5 個目標名額全部留給來車（docs/REAR_RADAR.md §3）
+  rear_.setDetection({config_.rear.detectRangeM(), ld2451::kDirectionApproach, config_.rear.minSpeedKmh, config_.rear.snr},
+                     nowMs);
 }
 
 void SpeedRadarApp::logRearLevel() {
@@ -244,9 +238,9 @@ void SpeedRadarApp::handleCommand(const char* text, Channel from) {
   const bool saved = store_.save(config_);
   reply(from, saved ? "OK saved\n" : "OK applied (flash save failed)\n");
   broadcastConfig();  // 網頁與序列埠都更新成新設定
-  // 安裝幾何或門檻改了：地面距離窗口要重新寫進雷達（約 4 秒內沒有資料，網頁會短暫顯示雷達離線）
+  // 兩顆雷達的偵測設定沒變就不會重寫；改了 GSNR／RANGE、RSPD、RSNR 才會（約 1 秒內沒有資料框）
   applyRadarDetection(millis());
-  applyRearDetection(millis());  // 後方雷達的設定沒變就不會重寫
+  applyRearDetection(millis());
 }
 
 void SpeedRadarApp::reply(Channel to, const char* line) {
@@ -275,6 +269,7 @@ void SpeedRadarApp::publishTelemetry(uint32_t nowMs) {
 
   TelemetrySnapshot s;
   s.radarOnline    = radar_.online();
+  s.receiveOnly    = radar_.receiveOnly();
   s.state          = estimator_.state();
   s.hasSpeed       = estimator_.hasSpeed();
   s.speedMps       = estimator_.speedMps();

@@ -1,11 +1,10 @@
 /**
- * 【UI 層】裝置提示：只在需要使用者處理時出現（韌體過舊、雷達離線、朝向可能設反、超過測速上限…）。
+ * 【UI 層】裝置提示：只在需要使用者處理時出現（韌體過舊、雷達離線、測速雷達只接收、朝向可能設反…）。
  */
 import { useShallow } from 'zustand/react/shallow';
-import { radarStore, useRadar, useSettings } from '../../../application/container';
+import { radarStore, useRadar } from '../../../application/container';
 import { WRONG_DIRECTION_HINT_PCT, firmwareMismatch } from '../../../application/selectors';
-import { FIRMWARE_MAJOR, unambiguousGroundMps } from '../../../domain/protocol';
-import { kmhToMps } from '../../../domain/units';
+import { FIRMWARE_MAJOR } from '../../../domain/protocol';
 import { Button, Notice } from '../../kit';
 
 export function DeviceNotices() {
@@ -17,12 +16,10 @@ export function DeviceNotices() {
       direction: r.config?.direction ?? null,
       stale: r.stale,
       radarOnline: r.telemetry?.radarOnline ?? null,
-      state: r.telemetry?.state ?? null,
+      receiveOnly: r.telemetry?.receiveOnly ?? false,
       wrongDirPct: r.telemetry?.wrongDirPct ?? 0,
-      unambiguousMps: r.config ? unambiguousGroundMps(r.config.radialLimitMps, r.config.angleDeg, r.config.calibration) : null,
     })),
   );
-  const limit = useSettings(useShallow((x) => ({ on: x.speedAlert, kmh: x.speedLimitKmh })));
   if (!s.connected) return null;
 
   const notices = [];
@@ -47,19 +44,14 @@ export function DeviceNotices() {
     );
   } else if (s.radarOnline === false) {
     notices.push(
-      <Notice key="radar" tone="bad" title="雷達離線">
-        ESP32 收不到 C4001 的資料，正在自動重新設定（剛改過安裝參數時約需 4 秒）。若持續，請檢查雷達的電源與 TX／RX 接線。
+      <Notice key="radar" tone="bad" title="測速雷達離線">
+        ESP32 收不到測速雷達（LD2451）的資料，正在自動重新尋找（約 5～30 秒重試一次）。若持續，請檢查雷達的 5 V 電源、GND，以及 TX → GPIO16、RX → GPIO17 的接線。
       </Notice>,
     );
-  }
-  if (s.state === 'overRange') {
+  } else if (s.receiveOnly) {
     notices.push(
-      <Notice key="over" tone="bad" title="超出雷達測速上限">
-        徑向速度接近 VMAX，雷達讀值不可靠。降低車速後會自動恢復；若在一般車速就出現，請依上手文件 §10.1 確認 C4001 的實際上限，再到「設定 → 裝置參數」調整 VMAX。
-        {limit.on &&
-          (s.unambiguousMps !== null && s.unambiguousMps >= kmhToMps(limit.kmh)
-            ? ` 雷達的上限高於速限 ${limit.kmh} km/h，這時一定已經超速。`
-            : ` 這時無法判斷是否超過速限 ${limit.kmh} km/h。`)}
+      <Notice key="ro" tone="warn" title="測速雷達只接收，設定寫不進去">
+        收得到測速雷達的資料，但指令沒有回覆（LD2451 RX 沒接到 GPIO17）。雷達會照它自己存的設定輸出；如果它被設成「只回報靠近」，就量不到朝後遠離的路面。請把 LD2451 RX 接到 GPIO17。
       </Notice>,
     );
   }
@@ -76,7 +68,7 @@ export function DeviceNotices() {
           </Button>
         }
       >
-        雷達朝向（DIR）可能設反，或前方有迎面移動的物體。若車子確實在前進，請切換朝向。
+        雷達朝向（DIR）可能設反，或雷達一直看到朝它靠近的物體（例如後方來車）。若車子確實在前進，請切換朝向。
       </Notice>,
     );
   }

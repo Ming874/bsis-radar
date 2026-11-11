@@ -28,7 +28,8 @@ describe('describeConnectionError', () => {
 describe('describeAck', () => {
   it('翻譯 ESP32 的回覆', () => {
     expect(describeAck(true, 'saved')).toContain('已儲存');
-    expect(describeAck(false, 'ANGLE must be 15-75 (deg)')).toContain('15° ～ 75°');
+    expect(describeAck(false, 'ANGLE must be 10-75 (deg)')).toContain('10° ～ 75°');
+    expect(describeAck(false, 'GSNR must be an integer 3-8')).toContain('3 ～ 8');
     expect(describeAck(false, 'CAL must be 0.5-2.0')).toContain('0.5 ～ 2.0');
     expect(describeAck(false, 'something else')).toContain('something else');
     expect(describeAck(false, 'settings over Bluetooth are disabled, use USB')).toContain('USB');

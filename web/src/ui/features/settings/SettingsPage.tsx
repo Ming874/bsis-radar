@@ -8,7 +8,7 @@ import { ALERT_COOLDOWN_MS } from '../../../application/overspeedStore';
 import type { ThemeSetting } from '../../../application/settingsStore';
 import { OVERSPEED_ENTER_MS, OVERSPEED_EXIT_MS, OVERSPEED_HYSTERESIS_MPS, SPEED_LIMIT_KMH } from '../../../domain/overspeed';
 import { CAUTION_COOLDOWN_MS, DANGER_REPEAT_MS } from '../../../domain/rear';
-import { LIMITS, diffConfig, unambiguousGroundMps } from '../../../domain/protocol';
+import { LIMITS, diffConfig } from '../../../domain/protocol';
 import type { EditableConfig } from '../../../domain/types';
 import { formatLimit, mpsToKmh, type SpeedUnit } from '../../../domain/units';
 import { checkForUpdate } from '../../../infrastructure/pwa/pwa';
@@ -19,7 +19,6 @@ import {
   ExternalIcon,
   FileTextIcon,
   ListGroup,
-  Notice,
   PowerIcon,
   RefreshIcon,
   Row,
@@ -95,13 +94,10 @@ function DisplayGroup() {
   );
 }
 
-/** 超速警示：速限與提示方式；可靠度受雷達測速上限影響，有問題時在下方提示 */
+/** 超速警示：速限與提示方式 */
 function AlertGroup() {
   const s = useSettings(useShallow((x) => ({ on: x.speedAlert, kmh: x.speedLimitKmh, sound: x.alertSound, vibrate: x.alertVibrate, unit: x.speedUnit })));
-  const config = useRadar((r) => r.config);
   const update = settingsStore.getState().update;
-  const unambiguousKmh = config ? mpsToKmh(unambiguousGroundMps(config.radialLimitMps, config.angleDeg, config.calibration)) : null;
-  const folding = unambiguousKmh !== null && unambiguousKmh < s.kmh;
   const hysteresisKmh = mpsToKmh(OVERSPEED_HYSTERESIS_MPS);
 
   return (
@@ -141,11 +137,6 @@ function AlertGroup() {
           </Button>
         </Row>
       </ListGroup>
-      {s.on && folding && unambiguousKmh !== null && (
-        <Notice tone="info" title={`速限高於雷達不折疊的最高速度 ${unambiguousKmh.toFixed(1)} km/h`}>
-          速限附近的讀值要靠韌體還原折疊，需要回波連續。若驗收發現 C4001 會截斷（上手文件 §10.1），超過 {unambiguousKmh.toFixed(1)} km/h 就會顯示「超出測速上限」，這時無法判斷是否超速。
-        </Notice>
-      )}
     </div>
   );
 }
@@ -189,7 +180,7 @@ function RearAlertGroup() {
   );
 }
 
-type DeviceFields = Pick<EditableConfig, 'radarThreshold' | 'wheelMm' | 'radialLimitMps'>;
+type DeviceFields = Pick<EditableConfig, 'radarSnr' | 'wheelMm'>;
 
 function DeviceGroup() {
   const config = useRadar((r) => r.config);
@@ -198,36 +189,28 @@ function DeviceGroup() {
   if (!config) {
     return (
       <ListGroup title="裝置參數（存在 ESP32）">
-        <Row label="連線後會讀取 ESP32 上的參數" detail="雷達門檻、測速上限、輪周長" />
+        <Row label="連線後會讀取 ESP32 上的參數" detail="測速雷達訊噪比門檻、輪周長" />
       </ListGroup>
     );
   }
   const value: DeviceFields = {
-    radarThreshold: draft.radarThreshold ?? config.radarThreshold,
+    radarSnr: draft.radarSnr ?? config.radarSnr,
     wheelMm: draft.wheelMm ?? config.wheelMm,
-    radialLimitMps: draft.radialLimitMps ?? config.radialLimitMps,
   };
   const set = (patch: Partial<DeviceFields>) => setDraft((d) => ({ ...d, ...patch }));
   const pending = diffConfig(config, { ...config, ...value });
   const valid =
-    inRange(value.radarThreshold, LIMITS.radarThreshold.min, LIMITS.radarThreshold.max) &&
-    Number.isInteger(value.radarThreshold) &&
+    inRange(value.radarSnr, LIMITS.radarSnr.min, LIMITS.radarSnr.max) &&
+    Number.isInteger(value.radarSnr) &&
     inRange(value.wheelMm, LIMITS.wheelMm.min, LIMITS.wheelMm.max) &&
-    Number.isInteger(value.wheelMm) &&
-    inRange(value.radialLimitMps, LIMITS.radialLimitMps.min, LIMITS.radialLimitMps.max);
+    Number.isInteger(value.wheelMm);
   const preset = WHEEL_PRESETS.find((p) => p.mm === value.wheelMm);
 
   return (
     <div id="device" className="scroll-mt-20">
       <ListGroup title="裝置參數（存在 ESP32，斷電不會消失）">
-        <Row label="雷達偵測門檻 RTHR" detail="越大越不靈敏；原廠 5。常常量不到路面時不要調高">
-          <Stepper label="雷達偵測門檻" value={value.radarThreshold} onChange={(v) => set({ radarThreshold: Math.round(v) })} min={LIMITS.radarThreshold.min} max={LIMITS.radarThreshold.max} step={1} decimals={0} width="w-9" />
-        </Row>
-        <Row
-          label="雷達測速上限 VMAX"
-          detail={`目前安裝下約 ${(unambiguousGroundMps(value.radialLimitMps, config.angleDeg, config.calibration) * 3.6).toFixed(1)} km/h；量到更大的值時韌體會自動調高`}
-        >
-          <Stepper label="雷達測速上限" value={value.radialLimitMps} onChange={(v) => set({ radialLimitMps: v })} min={LIMITS.radialLimitMps.min} max={LIMITS.radialLimitMps.max} step={0.01} decimals={2} unit="m/s" width="w-12" />
+        <Row label="測速雷達訊噪比門檻 GSNR" detail="越大越不靈敏；原廠 4。常常量不到路面時調低，雜散目標太多時調高（寫進 LD2451，約 1 秒內沒有資料）">
+          <Stepper label="測速雷達訊噪比門檻" value={value.radarSnr} onChange={(v) => set({ radarSnr: Math.round(v) })} min={LIMITS.radarSnr.min} max={LIMITS.radarSnr.max} step={1} decimals={0} width="w-9" />
         </Row>
         <Row label="輪周長 WHEEL" stack detail="只用於輪速感測器（參考值）。最準：氣門嘴朝下做記號，人坐上車往前滾一圈量距離">
           <div className="flex flex-wrap items-center gap-2">

@@ -15,11 +15,12 @@
   .\arduino.ps1 monitor          # 序列埠監看（115200），可直接輸入 HELP、GET、ANGLE 45 等指令
   .\arduino.ps1 ports            # 列出所有 COM 埠
   .\arduino.ps1 test             # 在電腦上跑單元測試（需要 g++）
+  .\arduino.ps1 devicetest       # 在 ESP32 上跑同一份單元測試，跑完自動燒回正式韌體（電腦上的 exe 被 Windows 擋住時用）
   .\arduino.ps1 release          # 編譯並輸出到 release\，給 flash.bat 一鍵燒錄（不需要 Arduino IDE）
 #>
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('setup', 'compile', 'upload', 'monitor', 'ports', 'test', 'release')]
+  [ValidateSet('setup', 'compile', 'upload', 'monitor', 'ports', 'test', 'devicetest', 'release')]
   [string]$Action = 'compile',
   [string]$Port = '',
   [string]$Fqbn = 'esp32:esp32:esp32'   # ESP32 Dev Module
@@ -46,7 +47,6 @@ $TestSources = @(
   'core\GroundSpeedEstimator.cpp',
   'core\WheelSpeed.cpp',
   'core\RearThreat.cpp',
-  'drivers\C4001Protocol.cpp',
   'drivers\LD2451Protocol.cpp',
   'comm\CommandParser.cpp',
   'comm\Telemetry.cpp'
@@ -134,9 +134,84 @@ switch ($Action) {
     $tests = Join-Path $PSScriptRoot 'tests'
     $exe = Join-Path $tests 'host_tests.exe'   # 放在 tests\（已排除在 git 外）：Windows 會擋暫存資料夾裡新編出來的 exe
     $sources = @((Join-Path $tests 'host_tests.cpp')) + ($TestSources | ForEach-Object { Join-Path $src $_ })
-    & g++ -std=c++14 -Wall -Wextra -O1 "-I$src" @sources -o $exe
+    # g++：PATH → C:\MinGW（舊環境）→ winget 裝的 WinLibs（winget install BrechtSanders.WinLibs.POSIX.UCRT）
+    $gxx = Get-Command g++ -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+    if (-not $gxx -and (Test-Path 'C:\MinGW\bin\g++.exe')) { $gxx = 'C:\MinGW\bin\g++.exe' }
+    if (-not $gxx) {
+      $gxx = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages\BrechtSanders.WinLibs*\mingw64\bin\g++.exe') -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $gxx) { throw '找不到 g++：winget install BrechtSanders.WinLibs.POSIX.UCRT' }
+    & $gxx -std=c++14 -Wall -Wextra -O1 "-I$src" @sources -o $exe
     if ($LASTEXITCODE -ne 0) { throw 'g++ 編譯失敗' }
     & $exe
     if ($LASTEXITCODE -ne 0) { throw '單元測試有失敗項目' }
+  }
+  'devicetest' {
+    # 同一份 tests\host_tests.cpp 編成 ESP32 程式（main 改名、在 setup() 裡呼叫），結果從序列埠讀回。
+    # Windows 的「智慧型應用程式控制」會擋電腦上新編出來的 host_tests.exe，這時改用這個。
+    # 會暫時把測試程式燒進 ESP32，跑完自動燒回正式韌體；NVS 的參數不受影響
+    $target = Get-TargetPort
+    $src = Join-Path $Sketch 'src'
+    $work = Join-Path $PSScriptRoot '.devicetest'   # 已排除在 git 外
+    $sketchDir = Join-Path $work 'HostTests'
+    $buildDir = Join-Path $work 'build'
+    if (Test-Path $sketchDir) { Remove-Item -Recurse -Force $sketchDir }
+    foreach ($dir in 'core', 'comm', 'drivers') {
+      $dest = Join-Path $sketchDir "src\$dir"
+      New-Item -ItemType Directory -Force $dest | Out-Null
+      Copy-Item (Join-Path $src "$dir\*.h") $dest
+    }
+    foreach ($f in $TestSources) { Copy-Item (Join-Path $src $f) (Join-Path $sketchDir "src\$(Split-Path $f)") }
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $body = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'tests\host_tests.cpp'), $utf8) -replace '#include "(comm|core|drivers)/', '#include "src/$1/'
+    [IO.File]::WriteAllText((Join-Path $sketchDir 'tests_entry.cpp'), "#define main host_tests_main`n" + $body, $utf8)
+    $ino = @'
+int host_tests_main();
+void setup() {
+  Serial.begin(115200);
+  delay(1500);
+  printf("\n=== HOST TESTS START ===\n");
+  const int rc = host_tests_main();
+  fflush(stdout);
+  printf("=== HOST TESTS EXIT %d ===\n", rc);
+}
+void loop() { delay(1000); }
+'@
+    [IO.File]::WriteAllText((Join-Path $sketchDir 'HostTests.ino'), $ino, $utf8)
+
+    Write-Host "編譯測試程式並燒錄到 $target ..."
+    Invoke-Cli compile --fqbn $Fqbn --warnings all --build-path $buildDir $sketchDir
+    Invoke-Cli upload --fqbn $Fqbn --port $target --input-dir $buildDir $sketchDir
+
+    # 重新開機（RTS），讀到結束標記或 4 分鐘逾時
+    $sp = New-Object System.IO.Ports.SerialPort $target, 115200, 'None', 8, 'One'
+    $sp.Encoding = $utf8
+    $sp.DtrEnable = $false
+    $sp.RtsEnable = $false
+    $sp.Open()
+    $sp.RtsEnable = $true
+    Start-Sleep -Milliseconds 100
+    $sp.RtsEnable = $false
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $buf = New-Object System.Text.StringBuilder
+    $rc = -1
+    while ($sw.Elapsed.TotalSeconds -lt 240) {
+      $buf.Append($sp.ReadExisting()) | Out-Null
+      $m = [regex]::Match($buf.ToString(), '=== HOST TESTS EXIT (-?\d+) ===')
+      if ($m.Success) { $rc = [int]$m.Groups[1].Value; break }
+      Start-Sleep -Milliseconds 100
+    }
+    $sp.Close()
+    $text = $buf.ToString()
+    $start = $text.IndexOf('=== HOST TESTS START')
+    if ($start -ge 0) { $text = $text.Substring($start) }
+    Write-Host $text
+
+    Write-Host '燒回正式韌體 ...'
+    Invoke-Cli compile --fqbn $Fqbn --build-path $Build $Sketch
+    Invoke-Cli upload --fqbn $Fqbn --port $target --input-dir $Build $Sketch
+    if ($rc -lt 0) { throw '沒有讀到測試結果（逾時）：用 .\arduino.ps1 monitor 看序列埠' }
+    if ($rc -ne 0) { throw '單元測試有失敗項目' }
   }
 }

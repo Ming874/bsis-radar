@@ -2,7 +2,7 @@
  * 【UI 層】距離 × 徑向速度散佈圖（最近 30 秒的資料框）。
  *
  * 平坦路面上，距離 r 的散射點徑向速度是 v·√(1 − h²/r²)：落在理論曲線附近的點就是路面回波。
- * 灰色帶是地面距離窗口；紅色虛線是雷達測速上限（VMAX）。
+ * 灰色帶是地面距離窗口。LD2451 的距離是整數公尺，點會排在整數距離上；圖上畫的是代表目標（中位數的那個）。
  */
 import type { DeviceConfig, FrameSample, FrameVerdict } from '../../domain/types';
 import { useElementWidth } from '../hooks/useElementWidth';
@@ -12,12 +12,10 @@ const PAD = { left: 38, right: 10, top: 10, bottom: 30 };
 function color(v: FrameVerdict): string {
   switch (v) {
     case 'accepted':
-    case 'unfolded':
     case 'acquiring':
       return 'var(--tint)';
     case 'outlier':
     case 'wrongDirection':
-    case 'atLimit':
       return 'var(--warn)';
     default:
       return 'var(--faint)';
@@ -48,7 +46,6 @@ export function ScatterPlot({
     yMax = Math.max(yMax, v * 1.1);
     yMin = Math.min(yMin, v * 1.1);
   }
-  if (config) yMax = Math.max(yMax, Math.min(config.radialLimitMps * 1.08, yMax * 1.5));
 
   const innerW = Math.max(10, width - PAD.left - PAD.right);
   const innerH = height - PAD.top - PAD.bottom;
@@ -66,7 +63,8 @@ export function ScatterPlot({
   }
 
   const xTicks: number[] = [];
-  for (let r = 0; r <= xMax + 1e-9; r += 0.5) xTicks.push(Number(r.toFixed(1)));
+  const xStep = xMax > 5 ? 1 : 0.5;
+  for (let r = 0; r <= xMax + 1e-9; r += xStep) xTicks.push(Number(r.toFixed(1)));
   const yStep = yMax - yMin > 12 ? 4 : yMax - yMin > 6 ? 2 : 1;
   const yTicks: number[] = [];
   for (let v = Math.ceil(yMin / yStep) * yStep; v <= yMax; v += yStep) yTicks.push(v);
@@ -75,7 +73,14 @@ export function ScatterPlot({
     <div ref={ref} className="w-full">
       <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="雷達資料框的距離與徑向速度分布" className="block h-auto">
         {config && config.gateMaxM > config.gateMinM && (
-          <rect x={x(config.gateMinM)} y={PAD.top} width={x(config.gateMaxM) - x(config.gateMinM)} height={innerH} fill="var(--surface-2)" />
+          // 韌體把窗口兩端往外取整（LD2451 的距離是整數公尺）
+          <rect
+            x={x(Math.floor(config.gateMinM))}
+            y={PAD.top}
+            width={x(Math.ceil(config.gateMaxM)) - x(Math.floor(config.gateMinM))}
+            height={innerH}
+            fill="var(--surface-2)"
+          />
         )}
         {yTicks.map((v) => (
           <g key={v}>
@@ -93,9 +98,6 @@ export function ScatterPlot({
         <text x={width - PAD.right} y={height - 1} textAnchor="end" fontSize={11} fill="var(--faint)">
           距離（m）
         </text>
-        {config && config.radialLimitMps < yMax && (
-          <line x1={PAD.left} x2={width - PAD.right} y1={y(config.radialLimitMps)} y2={y(config.radialLimitMps)} stroke="var(--bad)" strokeDasharray="4 3" />
-        )}
         {curve && <path d={curve} fill="none" stroke="var(--ref)" strokeWidth={1.5} strokeDasharray="5 3" />}
         {pts.map((p) => (
           <circle key={p.frame} cx={x(p.rangeM ?? 0)} cy={y(dir * (p.radialMps ?? 0))} r={2.5} fill={color(p.verdict)} fillOpacity={0.85} />
@@ -108,7 +110,7 @@ export function ScatterPlot({
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span aria-hidden className="h-2 w-2 rounded-full bg-warn" />
-          剔除（離群、方向、上限）
+          剔除（離群、方向相反）
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span aria-hidden className="h-2 w-2 rounded-full bg-faint" />

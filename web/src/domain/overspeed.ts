@@ -29,14 +29,7 @@ export const NO_OVERSPEED: OverspeedState = { active: false, since: null, pendin
  */
 export type OverspeedEvidence = 'over' | 'under' | 'hold' | 'unknown';
 
-/**
- * @param unambiguousMps 雷達不折疊的最高對地速度；「超出測速上限」只有在它不低於速限時才代表一定超速
- */
-export function overspeedEvidence(
-  t: Pick<Telemetry, 'state' | 'speedMps'>,
-  limitMps: number,
-  unambiguousMps: number | null,
-): OverspeedEvidence {
+export function overspeedEvidence(t: Pick<Telemetry, 'state' | 'speedMps'>, limitMps: number): OverspeedEvidence {
   switch (t.state) {
     case 'tracking':
       if (t.speedMps === null) return 'unknown';
@@ -44,8 +37,6 @@ export function overspeedEvidence(
       return t.speedMps < limitMps - OVERSPEED_HYSTERESIS_MPS ? 'under' : 'hold';
     case 'holding':
       return 'hold'; // 韌體沿用估計值最多 2 秒：已在超速就維持，但不據此進入
-    case 'overRange':
-      return unambiguousMps !== null && unambiguousMps >= limitMps ? 'over' : 'unknown';
     case 'stopped':
     case 'acquiring':
     case 'lost':

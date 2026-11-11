@@ -43,7 +43,6 @@ const STATE_VIEW: Record<SpeedState, StatusView> = {
   tracking: { tone: 'ok', label: '追蹤中' },
   holding: { tone: 'warn', label: '暫時失去回波', detail: '暫時沿用估計值' },
   lost: { tone: 'bad', label: '訊號中斷', detail: '雷達量不到路面' },
-  overRange: { tone: 'bad', label: '超出測速上限', detail: '速度高於雷達可量範圍' },
 };
 
 /** 估計器狀態（速度旁的狀態列） */
@@ -54,14 +53,11 @@ export function describeState(state: SpeedState): StatusView {
 export const VERDICT_LABEL: Record<FrameVerdict, string> = {
   accepted: '採用',
   noTarget: '沒有目標',
-  repeated: '外插（重複）',
-  outOfGate: '距離窗口外',
+  outOfGate: '窗口外（距離或角度）',
   wrongDirection: '方向相反',
   static: '靜止回波',
-  atLimit: '接近測速上限',
   outlier: '離群值',
   acquiring: '擷取中',
-  unfolded: '採用（折疊還原）',
 };
 
 /** 韌體版本與網頁不相容（主版本不同） */

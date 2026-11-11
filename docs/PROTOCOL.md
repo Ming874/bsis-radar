@@ -1,8 +1,10 @@
-# ESP32 ⇄ 網頁通訊協定（韌體 3.x）
+# ESP32 ⇄ 網頁通訊協定（韌體 4.x）
 
 ESP32 與網頁之間以**一行一筆的純文字**溝通：`鍵=值` 以空白分隔，每行以 `\n` 結尾。同一套指令也可以從 USB 序列埠（115200 bps）輸入，USB 端輸出的遙測與藍牙完全相同，可直接用同一套工具記錄與分析。
 
 韌體實作：`firmware/SpeedRadar/src/comm/Telemetry.cpp`、`CommandParser.cpp`；網頁實作：`web/src/domain/protocol.ts`。
+
+4.0 起兩顆雷達都是 HLK-LD2451：**測速雷達**斜照路面（取代 3.x 的 DFRobot C4001）、**後方雷達**朝正後方。3.x 與 4.x 的遙測、設定欄位不同，網頁 4.x 只支援韌體 4.x（主版本不同時會提示）。
 
 ## 1. 傳輸層：BLE Nordic UART Service
 
@@ -20,33 +22,37 @@ ESP32 與網頁之間以**一行一筆的純文字**溝通：`鍵=值` 以空白
 
 ## 2. 遙測（ESP32 → 網頁）
 
-每收到一筆 C4001 資料框（約 10 Hz）送一行；雷達沒有資料時每 250 ms 送一行心跳，心跳的 `FN` 不變。
+測速雷達每送一個資料框就送一行；雷達沒有資料時每 250 ms 送一行心跳，心跳的 `FN` 不變。LD2451 有目標時連續輸出（頻率待實測，估計約 10 Hz），**沒有目標時約每 1.4 秒才送一個空資料框**。
 
 ```text
-R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=0 DR=1234.5 W=5.51 DW=1240.2 T=812
+R=1 RO=0 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=3 A=-2 RD=2 RV=4.72 S=12 G=5.40 FV=0 DR=1234.5 W=5.51 DW=1240.2 T=812
 ```
 
 | 欄位 | 意義 | 單位／格式 | 沒有資料時 |
 | --- | --- | --- | --- |
-| `R` | 雷達是否在線（ESP32 有收到 C4001 的資料框） | 0／1 | — |
-| `ST` | 估計器狀態，見 §2.1 | 0～6 | `0` |
+| `R` | 測速雷達是否在線（ESP32 收得到 LD2451 的資料） | 0／1 | — |
+| `RO` | 測速雷達只接收：指令沒有回覆（LD2451 RX 沒接到 GPIO17），偵測設定寫不進雷達 | 0／1 | `0` |
+| `ST` | 估計器狀態，見 §2.1 | 0～5 | `0` |
 | `V` | 對地速度（濾波後、已乘校正係數） | m/s，2 位小數 | `-1`（速度未知） |
 | `SD` | `V` 的 1σ 不確定度（卡爾曼濾波的共變異數） | m/s | `0` |
-| `Q` | 最近 20 筆資料框中可用量測（採用、折疊還原）的比例 | % | `0` |
-| `WD` | 最近 20 筆資料框中「方向相反」的比例；持續偏高代表 `DIR` 可能設反 | % | `0` |
+| `Q` | 最近 20 個資料框中可用量測（採用）的比例 | % | `0` |
+| `WD` | 最近 20 個資料框中「方向相反」的比例；持續偏高代表 `DIR` 可能設反 | % | `0` |
 | `FN` | 資料框序號（開機起累計） | 整數 | — |
-| `N` | 這一筆資料框的目標數（C4001 最多 1 個） | 0／1 | `0` |
-| `RD` | 原始距離 | m | `-1` |
-| `RV` | 原始徑向速度（C4001 自己的正負號：遠離為正） | m/s | `0` |
-| `E` | 原始反射能量 | 整數 | `0` |
-| `G` | 這一筆換算的對地速度（濾波前） | m/s | `-1`（沒有換算） |
-| `FV` | 這一筆的判斷結果，見 §2.2 | 0～9 | `1` |
+| `N` | 這個資料框的目標數（LD2451 最多 5 個「移動中」的目標） | 0～5 | `0` |
+| `A` | 代表目標的水平角（0 = 視軸） | 度，整數 | `0` |
+| `RD` | 代表目標的距離 | m，**整數** | `-1` |
+| `RV` | 代表目標的徑向速度：**正 = 遠離雷達**（朝後安裝、往前騎時的路面） | m/s，2 位小數（雷達的解析度是 1 km/h） | `0` |
+| `S` | 代表目標的訊噪比 | 整數 | `0` |
+| `G` | 這個資料框換算的對地速度（濾波前；多個路面目標時是中位數） | m/s | `-1`（沒有換算） |
+| `FV` | 這個資料框的判斷結果，見 §2.2 | 0～8 | `1` |
 | `DR` | 雷達里程（開機起） | m，1 位小數 | — |
 | `W` | 輪速感測器的速度（參考值） | m/s | 開機後沒收過脈衝時不送 |
 | `DW` | 輪速感測器的里程（圈數 × 輪周長） | m | 同上 |
 | `T` | ESP32 開機後經過的時間 | s | — |
 
-雷達離線（`R=0`）時 `ST=0`、`V=-1`，不送過時的原始值；`W`／`DW` 與雷達無關，照常送出。最長的一行約 150 位元組，韌體緩衝區 176 位元組（單元測試會檢查）。
+**代表目標**：方向正確、在窗口內的目標取對地速度的中位數，那個目標就是代表（偶數個時取中間兩個的平均，代表目標是訊噪比較高的那個）；沒有的話依序是方向相反、靜止、窗口外的目標中訊噪比最高的（[ALGORITHM.md](ALGORITHM.md) §0.3）。
+
+雷達離線（`R=0`）時 `ST=0`、`V=-1`、`RO=0`，不送過時的原始值；`W`／`DW` 與雷達無關，照常送出。最長的一行約 150 位元組，韌體緩衝區 176 位元組（單元測試會檢查）。
 
 ### 2.1 估計器狀態 `ST`
 
@@ -54,11 +60,12 @@ R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=
 | --- | --- | --- | --- |
 | 0 | NoRadar | 雷達離線或尚未有資料 | `-1` |
 | 1 | Stopped | 靜止 | `0` |
-| 2 | Acquiring | 剛看到地面回波，確認中（3 筆一致才開始追蹤） | `0` |
+| 2 | Acquiring | 剛看到地面回波，確認中（1 秒內 3 筆一致才開始追蹤） | `0` |
 | 3 | Tracking | 正常追蹤 | 估計值 |
 | 4 | Holding | 短暫失去地面回波，沿用估計值（最多 2 秒） | 估計值 |
 | 5 | Lost | 訊號中斷 | `-1` |
-| 6 | OverRange | 速度超過雷達測速上限（`VMAX`） | `-1` |
+
+3.x 的 `6`（OverRange，超過 C4001 測速上限）在 4.0 拿掉：LD2451 可量到 120 km/h，不會折疊。
 
 ### 2.2 資料框判斷 `FV`
 
@@ -66,18 +73,17 @@ R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=
 | --- | --- | --- |
 | 0 | Accepted | 採用，用來更新速度 |
 | 1 | NoTarget | 雷達沒有回報目標 |
-| 2 | Repeated | C4001 的外插資料框（速度、能量與上一筆完全相同），不算量測 |
-| 3 | OutOfGate | 距離不在地面距離窗口內（不是腳下的路面） |
-| 4 | WrongDirection | 速度方向與 `DIR` 相反 |
-| 5 | Static | 靜止回波（徑向速度約 0），或停著時的微小晃動 |
-| 6 | AtLimit | 原始徑向速度在 `VMAX` 附近，不可靠 |
+| 3 | OutOfGate | 目標都不在地面窗口內：距離超出窗口，或水平角超過 ±30° |
+| 4 | WrongDirection | 窗口內的目標都和 `DIR` 預期的方向相反（後方來車，或 `DIR` 設反） |
+| 5 | Static | 靜止回波（0 km/h），或停著時的微小晃動 |
 | 7 | Outlier | 與目前估計相差超過 3σ 閘門 |
 | 8 | Acquiring | 擷取階段的量測 |
-| 9 | Unfolded | 採用；都卜勒超過 `VMAX` 被雷達折疊，已依預測還原 |
+
+`2`（Repeated，C4001 的外插資料框）、`6`（AtLimit，接近 `VMAX`）、`9`（Unfolded，折疊還原）是 3.x 才有的，4.0 不再出現。LD2451 的速度是整數 km/h，連續幾個資料框完全一樣很正常，不再當作外插。
 
 ### 2.3 後方來車（`REAR` 行，韌體 3.1 起）
 
-HLK-LD2451 的狀態另外一行，和上面的遙測分開送（每行都放得進一個藍牙通知）：有目標或警示中每 0.1 秒、沒有目標時每 0.5 秒、後方雷達離線時每 1 秒（`REAR ON=0`），**等級改變時立刻送**。`AppConfig.h` 的 `kPinRearRx = -1`（沒有後方雷達）時完全不送。
+後方 LD2451 的狀態另外一行，和上面的遙測分開送（每行都放得進一個藍牙通知）：有目標或警示中每 0.1 秒、沒有目標時每 0.5 秒、後方雷達離線時每 1 秒（`REAR ON=0`），**等級改變時立刻送**。`AppConfig.h` 的 `kPinRearRx = -1`（沒有後方雷達）時完全不送。
 
 ```text
 REAR ON=1 RO=0 LV=1 D=12.4 V=4.17 TTC=3.0 HOLD=0 N=2 CNT=3 FN=812 X=-3/12/15,6/31/-40
@@ -97,37 +103,37 @@ REAR ON=1 RO=0 LV=1 D=12.4 V=4.17 TTC=3.0 HOLD=0 N=2 CNT=3 FN=812 X=-3/12/15,6/3
 | `FN` | 後方雷達資料框序號（開機起） | 整數 | — |
 | `X` | 這個資料框的每個目標：`角度/距離/速度`，以逗號分隔。角度 °（0 = 正後方）、距離 m、速度 km/h（**正 = 靠近、負 = 遠離**） | 整數 | 沒有目標時不送 |
 
-`ON=0` 時只有這一個欄位。LD2451 的距離、速度、角度都是整數（雷達本身的解析度）。最長的一行約 150 位元組。
+`ON=0` 時只有這一個欄位。LD2451 的距離、速度、角度都是整數（雷達本身的解析度）。最長的一行約 150 位元組。注意 `REAR` 的 `X` 速度是「正 = 靠近」，主遙測的 `RV` 是「正 = 遠離」：兩者各自沿用 3.x 的定義。
 
 ## 3. 設定（ESP32 → 網頁）
 
 回應 `GET`，以及每次設定成功後主動廣播一次：
 
 ```text
-CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=10.0 RMIN=0.62 RMAX=2.15 RANGE=15 RSPD=5 TTC=2.5 RSNR=4 RDET=25 FW=3.1.0
+CFG ANGLE=30.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 GSNR=4 WHEEL=2105 RMIN=0.71 RMAX=8.13 RANGE=15 RSPD=5 TTC=2.5 RSNR=4 RDET=25 FW=4.0.0
 ```
 
 | 欄位 | 指令 | 意義 | 範圍 | 預設 |
 | --- | --- | --- | --- | --- |
-| `ANGLE` | `ANGLE <度>` | 雷達視軸的俯角（與水平面的夾角） | 15～75 | 45 |
-| `HEIGHT` | `HEIGHT <m>` | 雷達天線面中心的離地高度 | 0.15～1.50 | 0.70 |
-| `DIR` | `DIR 1\|-1` | 雷達朝向：`1` 朝後（地面遠離，C4001 回報正值）、`-1` 朝前 | 1／-1 | 1 |
-| `MODEL` | `MODEL 0\|1` | 速度模型：`0` 固定角度、`1` 距離幾何（[ALGORITHM.md](ALGORITHM.md) §5） | 0／1 | 0 |
+| `ANGLE` | `ANGLE <度>` | 測速雷達視軸的俯角（與水平面的夾角） | 10～75 | 30 |
+| `HEIGHT` | `HEIGHT <m>` | 測速雷達天線面中心的離地高度 | 0.15～1.50 | 0.70 |
+| `DIR` | `DIR 1\|-1` | 雷達朝向：`1` 朝後（往前騎時地面遠離）、`-1` 朝前 | 1／-1 | 1 |
+| `MODEL` | `MODEL 0\|1` | 速度模型：`0` 固定角度、`1` 距離幾何（[ALGORITHM.md](ALGORITHM.md) §0.4） | 0／1 | 0 |
 | `CAL` | `CAL <係數>` | 校正係數，速度與里程都乘上它 | 0.5～2.0，4 位小數 | 1.0000 |
-| `RTHR` | `RTHR <n>` | C4001 本身的偵測門檻（`setThrFactor`），越大越不靈敏 | 1～50 的整數 | 5 |
+| `GSNR` | `GSNR <n>` | 測速雷達（LD2451）的訊噪比門檻，越大越不靈敏（寫進雷達） | 3～8 的整數 | 4 |
 | `WHEEL` | `WHEEL <mm>` | 輪周長，只用於輪速感測器（參考值） | 1000～3000 的整數 | 2105 |
-| `VMAX` | `VMAX <m/s>` | C4001 徑向測速上限，用於截斷偵測與折疊還原 | 2～20 | 10.0 |
-| `RMIN`／`RMAX` | — | 由 `ANGLE`、`HEIGHT` 算出的地面距離窗口（唯讀） | m | — |
+| `RMIN`／`RMAX` | — | 由 `ANGLE`、`HEIGHT` 算出的地面距離窗口（唯讀）；LD2451 的距離是整數，韌體實際用 ⌊`RMIN`⌋～⌈`RMAX`⌉ | m | — |
 | `RANGE` | `RANGE <m>` | 後方來車警示距離：確認的來車在這個距離內 → 注意 | 5～50 的整數 | 15 |
-| `RSPD` | `RSPD <km/h>` | 後方來車最低接近速度（寫進 LD2451，ESP32 也再篩一次） | 1～30 的整數 | 5 |
+| `RSPD` | `RSPD <km/h>` | 後方來車最低接近速度（寫進後方 LD2451，ESP32 也再篩一次） | 1～30 的整數 | 5 |
 | `TTC` | `TTC <s>` | 到達時間 ≤ TTC（或距離 ≤ 5 m）→ 危險 | 1.0～6.0，1 位小數 | 2.5 |
-| `RSNR` | `RSNR <n>` | LD2451 的訊噪比門檻，越大越不靈敏（寫進 LD2451） | 3～8 的整數 | 4 |
-| `RDET` | — | 寫進 LD2451 的最大偵測距離 = `RANGE` + 10（10～100，唯讀） | m | 25 |
+| `RSNR` | `RSNR <n>` | 後方 LD2451 的訊噪比門檻，越大越不靈敏（寫進雷達） | 3～8 的整數 | 4 |
+| `RDET` | — | 寫進後方 LD2451 的最大偵測距離 = `RANGE` + 10（10～100，唯讀） | m | 25 |
 | `FW` | — | 韌體版本 | — | — |
 
-- 參數存在 ESP32 的 NVS（命名空間 `speedRadar`），斷電不會消失；3.0 不讀取 2.x 的設定。後方來車參數（3.1 新增）另外記版本、分開檢查，從 3.0 升級時原本的設定（含校正係數）會保留。
-- 修改 `ANGLE`、`HEIGHT`、`RTHR` 時，ESP32 會把新的距離窗口與門檻寫進 C4001，約 4 秒內沒有資料框（`R=0`）。
-- 修改 `RANGE`、`RSPD`、`RSNR` 時，ESP32 會重新寫入 LD2451（約 1 秒內沒有後方資料）；只接收模式（`RO=1`）寫不進去，只在 ESP32 端篩選。
+寫進測速雷達的其他偵測設定是固定的：最大距離 10 m（可設定的最小值）、**靠近遠離都回報**（方向由 ESP32 依 `DIR` 判斷，設反時網頁才看得出來）、最低速度 1 km/h、延遲 1 s、累計觸發 1 次。
+
+- 參數存在 ESP32 的 NVS（命名空間 `speedRadar`），斷電不會消失。對地測速欄位的版本：4.0 是 `ver=2`。從 3.x（`ver=1`，C4001）升級時沿用 `ANGLE`、`HEIGHT`、`DIR`、`WHEEL`；`CAL` 回到 1（換了雷達要重新校正），`MODEL`、`GSNR` 用預設值，C4001 的 `RTHR`、`VMAX` 在下次存檔時刪除。後方來車參數（3.1 新增）另外記版本，不受影響。
+- 修改 `GSNR` 時 ESP32 會重新寫入測速雷達；修改 `RANGE`、`RSPD`、`RSNR` 時重新寫入後方雷達（各約 1 秒內沒有資料框）。只接收模式（`RO=1`）寫不進去。改 `ANGLE`、`HEIGHT` 只影響 ESP32 的換算與窗口，不必重寫雷達。
 - 沒有 `RANGE` 的 `CFG` 是 3.0 的韌體（沒有後方雷達功能）。
 
 ## 4. 指令（網頁 → ESP32）
@@ -137,11 +143,13 @@ CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=10.0 
 | 指令 | 作用 |
 | --- | --- |
 | `GET` | 回傳一行 `CFG` |
-| `ANGLE 45`、`HEIGHT 0.7`、`DIR -1`、`MODEL 1`、`CAL 1.0425`、`RTHR 5`、`WHEEL 2105`、`VMAX 10` | 修改單一參數（對地測速） |
+| `ANGLE 30`、`HEIGHT 0.7`、`DIR -1`、`MODEL 1`、`CAL 1.0425`、`GSNR 4`、`WHEEL 2105` | 修改單一參數（對地測速） |
 | `RANGE 15`、`RSPD 5`、`TTC 2.5`、`RSNR 4` | 修改單一參數（後方來車） |
 | `DEFAULTS` | 所有參數恢復預設值 |
 | `REBOOT` | 重新啟動 ESP32 |
 | `HELP` 或 `?` | 列出所有指令 |
+
+3.x 的 `RTHR`、`VMAX` 在 4.0 回覆 `ERR unknown command`。
 
 ### 指令回覆
 
@@ -151,7 +159,7 @@ CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=10.0 
 | `OK applied (flash save failed)` | 已生效，但寫入快閃記憶體失敗（重開機會還原） |
 | `OK reboot` | 收到 `REBOOT`，約 0.2 秒後重新開機 |
 | `OK commands: …` | `HELP` 的指令列表 |
-| `ERR <參數> must be <範圍>` | 數值超出範圍或格式錯誤（例如 `ERR ANGLE must be 15-75 (deg)`） |
+| `ERR <參數> must be <範圍>` | 數值超出範圍或格式錯誤（例如 `ERR ANGLE must be 10-75 (deg)`） |
 | `ERR missing or bad value` | 缺少數值，或數值後面有多餘文字 |
 | `ERR settings over Bluetooth are disabled, use USB` | `kAllowBleConfig = false` 時從藍牙修改參數 |
 | `ERR unknown command, try HELP` | 不認得的指令 |
@@ -162,17 +170,17 @@ CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=10.0 
 - 同一行出現重複的鍵代表兩行被黏在一起（藍牙分段遺失），整行丟棄。
 - 數值一律使用小數點、不含單位；`-1` 代表「沒有資料」（`V`、`RD`、`G`）。
 - 開頭為 `CFG` 的是設定，`REAR` 是後方來車，`OK`／`ERR` 是指令回覆，其他含 `R`、`ST`、`V` 的是遙測。
-- 判斷韌體世代：`CFG` 含 `TEST=`、`MINSPD=` 的是 2.x（後方來車偵測版），網頁會提示更新韌體。
+- 判斷韌體世代：`CFG` 含 `TEST=`、`MINSPD=` 的是 2.x（後方來車偵測版），網頁會提示更新韌體；`FW` 的主版本與網頁不同（例如 3.x 的 C4001 版）時網頁也會提示。
 
 ## 6. CSV 紀錄格式（網頁「數據 → 記錄 CSV」）
 
-每一筆新的資料框一列（心跳行不重複記錄），UTF-8 含 BOM，Excel 可直接開啟。欄位與遙測一一對應：
+每一個新的資料框一列（心跳行不重複記錄），UTF-8 含 BOM，Excel 可直接開啟。欄位與遙測一一對應：
 
 ```text
-time_iso,uptime_s,frame,radar_online,state,speed_mps,sigma_mps,quality_pct,targets,range_m,radial_mps,energy,ground_mps,verdict,radar_distance_m,wheel_mps,wheel_distance_m,rear_online,rear_level,rear_distance_m,rear_closing_mps,rear_ttc_s,rear_targets
+time_iso,uptime_s,frame,radar_online,state,speed_mps,sigma_mps,quality_pct,targets,angle_deg,range_m,radial_mps,snr,ground_mps,verdict,radar_distance_m,wheel_mps,wheel_distance_m,rear_online,rear_level,rear_distance_m,rear_closing_mps,rear_ttc_s,rear_targets
 ```
 
-`state` 與 `verdict` 以名稱表示（`tracking`、`accepted`…）。`rear_*` 是那一刻最新的 `REAR` 行（網頁 3.1 起）：`rear_level` 為 `safe`／`caution`／`danger`，`rear_targets` 是以空白分隔的 `角度/距離/速度`。分析工具：[`firmware/diagnostics/analyze_ride.py`](../firmware/diagnostics/README.md)。
+`state` 與 `verdict` 以名稱表示（`tracking`、`accepted`…）。`angle_deg`、`range_m`、`radial_mps`、`snr` 是代表目標（§2）。網頁 3.x 的 CSV 在 `radial_mps` 後面是 C4001 的 `energy`，4.0 改成 `snr`，並在 `range_m` 前面多了 `angle_deg`。`rear_*` 是那一刻最新的 `REAR` 行（網頁 3.1 起）：`rear_level` 為 `safe`／`caution`／`danger`，`rear_targets` 是以空白分隔的 `角度/距離/速度`。分析工具：[`firmware/diagnostics/analyze_ride.py`](../firmware/diagnostics/README.md)。
 
 ## 7. 網頁的匯出檔
 
@@ -191,7 +199,7 @@ start_iso,end_iso,distance_m,moving_s,elapsed_s,avg_kmh,max_kmh,overspeed_count,
 **備份檔**（「設定 → 資料 → 匯出備份」，JSON）：
 
 ```json
-{ "app": "bsis-speed", "version": 1, "exportedAt": 1792000000000, "webVersion": "3.2.0",
+{ "app": "bsis-speed", "version": 1, "exportedAt": 1792000000000, "webVersion": "4.0.0",
   "settings": { "speedUnit": "kmh", "speedLimitKmh": 25, "...": "..." },
   "trips": [ { "id": "…", "startedAt": 0, "endedAt": 0, "distanceM": 0, "movingS": 0, "maxMps": 0, "rearAlerts": 3, "trace": { "stepS": 1, "v": [512, -1, 530] } } ] }
 ```

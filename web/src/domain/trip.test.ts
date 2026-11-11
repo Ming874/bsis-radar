@@ -5,6 +5,7 @@ import type { Telemetry } from './types';
 function tele(at: number, patch: Partial<Telemetry>): Telemetry {
   return {
     radarOnline: true,
+    receiveOnly: false,
     state: 'tracking',
     speedMps: 5,
     sigmaMps: 0.1,
@@ -12,9 +13,10 @@ function tele(at: number, patch: Partial<Telemetry>): Telemetry {
     wrongDirPct: 0,
     frame: 0,
     targets: 1,
-    rangeM: 0.9,
+    angleDeg: 0,
+    rangeM: 1,
     radialMps: 3.5,
-    energy: 1000,
+    snr: 20,
     groundMps: 5,
     verdict: 'accepted',
     radarDistanceM: 0,

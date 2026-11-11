@@ -29,8 +29,10 @@ describe('其他', () => {
   });
 
   it('韌體主版本不同', () => {
-    expect(firmwareMismatch('3.0.0')).toBe(false);
-    expect(firmwareMismatch('4.0.0')).toBe(true);
+    expect(firmwareMismatch('4.0.0')).toBe(false);
+    expect(firmwareMismatch('4.2.1')).toBe(false);
+    expect(firmwareMismatch('3.1.0')).toBe(true); // 測速雷達還是 C4001 的韌體
+    expect(firmwareMismatch('5.0.0')).toBe(true);
     expect(firmwareMismatch(undefined)).toBe(false);
   });
 

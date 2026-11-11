@@ -1,13 +1,13 @@
 /**
  * 【基礎設施層】示範模式（網址加上 ?demo）：不需要硬體，產生與韌體相同格式的遙測，給展示、截圖與開發用。
  *
- * 模擬一段城市騎乘（起步、巡航、變速、停等），每 0.1 秒一筆資料框：路面散射點的俯角分散、
+ * 模擬一段城市騎乘（起步、巡航、變速、停等），每 0.1 秒一個 LD2451 資料框（1～3 個路面點）：路面散射點的俯角分散、
  * 偶爾沒有回波或雜散目標、輪速感測器參考值。速度輸出模擬校正後的韌體：約 0.2 秒落後、1σ 約 1.5%。
  * 後方來車：每 12～20 秒有一台車從 35 m 外以 10～45 km/h 的接近速度追上來（偶爾兩台），
  * 用和韌體 RearThreat 相同的規則分級（確認 2 筆、5 m 或到達時間 ≤ TTC 危險、RANGE 內注意、保持 1.5 秒）。
  */
 import { NO_OVERSPEED, overspeedEvidence, stepOverspeed } from '../../domain/overspeed';
-import { DEFAULT_CONFIG, DEFAULT_REAR_CONFIG, REAR_DANGER_DIST_M, REAR_HOLD_MS, rearDetectRange } from '../../domain/protocol';
+import { DEFAULT_CONFIG, DEFAULT_REAR_CONFIG, REAR_DANGER_DIST_M, REAR_HOLD_MS, groundWindow, rearDetectRange } from '../../domain/protocol';
 import { TraceBuilder } from '../../domain/trace';
 import type { SavedTrip } from '../../domain/trip';
 import type { EditableConfig, EditableRearConfig } from '../../domain/types';
@@ -134,7 +134,8 @@ export class DemoTransport implements RadarTransport {
   private readonly lines = new Emitter<string>();
   private readonly states = new Emitter<TransportState>();
   private timer: ReturnType<typeof setInterval> | null = null;
-  private config: EditableConfig = { ...DEFAULT_CONFIG, calibration: 1.1621 };
+  // CAL：散射點平均偏向正下方 7.5° 時，30° 安裝的讀值偏低約 8.6%（韌體模擬報告的乾柏油校正結果）
+  private config: EditableConfig = { ...DEFAULT_CONFIG, calibration: 1.0943 };
   private rearConfig: EditableRearConfig = { ...DEFAULT_REAR_CONFIG };
   private rear = new DemoRear();
   private t = 0;
@@ -192,14 +193,11 @@ export class DemoTransport implements RadarTransport {
       case 'CAL':
         c.calibration = v;
         break;
-      case 'RTHR':
-        c.radarThreshold = v;
+      case 'GSNR':
+        c.radarSnr = v;
         break;
       case 'WHEEL':
         c.wheelMm = v;
-        break;
-      case 'VMAX':
-        c.radialLimitMps = v;
         break;
       case 'RANGE':
         this.rearConfig.rangeM = v;
@@ -231,11 +229,9 @@ export class DemoTransport implements RadarTransport {
 
   private cfgLine(): string {
     const c = this.config;
-    const rad = (d: number) => (d * Math.PI) / 180;
-    const rmin = Math.max(0.3, c.heightM / Math.sin(rad(Math.min(85, c.angleDeg + 30))) - 0.1);
-    const rmax = c.heightM / Math.sin(rad(Math.max(8, c.angleDeg - 25))) + 0.1;
+    const w = groundWindow(c.angleDeg, c.heightM);
     const r = this.rearConfig;
-    return `CFG ANGLE=${c.angleDeg.toFixed(1)} HEIGHT=${c.heightM.toFixed(2)} DIR=${c.direction} MODEL=${c.model === 'rangeGeometry' ? 1 : 0} CAL=${c.calibration.toFixed(4)} RTHR=${c.radarThreshold} WHEEL=${c.wheelMm} VMAX=${c.radialLimitMps.toFixed(2)} RMIN=${rmin.toFixed(2)} RMAX=${rmax.toFixed(2)} RANGE=${r.rangeM} RSPD=${r.minSpeedKmh} TTC=${r.ttcS.toFixed(1)} RSNR=${r.snr} RDET=${rearDetectRange(r.rangeM)} FW=3.1.0`;
+    return `CFG ANGLE=${c.angleDeg.toFixed(1)} HEIGHT=${c.heightM.toFixed(2)} DIR=${c.direction} MODEL=${c.model === 'rangeGeometry' ? 1 : 0} CAL=${c.calibration.toFixed(4)} GSNR=${c.radarSnr} WHEEL=${c.wheelMm} RMIN=${w.minM.toFixed(2)} RMAX=${w.maxM.toFixed(2)} RANGE=${r.rangeM} RSPD=${r.minSpeedKmh} TTC=${r.ttcS.toFixed(1)} RSNR=${r.snr} RDET=${rearDetectRange(r.rangeM)} FW=4.0.0`;
   }
 
   private tick() {
@@ -247,25 +243,49 @@ export class DemoTransport implements RadarTransport {
     const moving = v > 0.05;
 
     let n = 0;
+    let angle = 0;
     let rd = -1;
     let rv = 0;
-    let e = 0;
+    let snr = 0;
     let g = -1;
     let fv = 1;
     if (moving && Math.random() < 0.92) {
-      // 散射點偏向正下方（波束加權），CAL 把平均偏差校正回來
-      const a = c.angleDeg + 7.5 + 7 * gauss();
-      n = 1;
-      rd = c.heightM / Math.sin(rad(a)) + 0.03 * gauss();
-      rv = c.direction * (v * Math.cos(rad(a)) + 0.08 * gauss());
-      e = Math.round(20000 + Math.random() * 400000);
-      g = (c.calibration * Math.abs(rv)) / Math.cos(rad(c.angleDeg));
-      fv = Math.abs(g - this.est) > 2.5 && this.est > 1 ? 7 : 0;
+      // LD2451：每個資料框 1～3 個路面點（整數公尺、整數 km/h、整數度）。散射點偏向正下方（波束加權），
+      // CAL 把平均偏差校正回來；韌體取換算後對地速度的中位數
+      const points: { az: number; d: number; kmh: number; snr: number; g: number }[] = [];
+      const count = 1 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < count; i++) {
+        const el = c.angleDeg + 7.5 + 7 * gauss();
+        const az = Math.round(8 * gauss());
+        const kmh = Math.round(3.6 * (v * Math.cos(rad(az)) * Math.cos(rad(el)) + 0.08 * gauss()));
+        if (kmh <= 0) continue;
+        points.push({
+          az,
+          d: Math.round(c.heightM / (Math.cos(rad(az)) * Math.sin(rad(el)))),
+          kmh,
+          snr: Math.round(10 + Math.random() * 40),
+          g: (c.calibration * kmh) / 3.6 / (Math.cos(rad(c.angleDeg)) * Math.cos(rad(az))),
+        });
+      }
+      points.sort((p, q) => p.g - q.g);
+      const mid = points[Math.floor(points.length / 2)];
+      const lower = points[points.length / 2 - 1];
+      if (mid) {
+        n = points.length;
+        angle = mid.az;
+        rd = mid.d;
+        rv = (c.direction * mid.kmh) / 3.6;
+        snr = mid.snr;
+        g = points.length % 2 === 0 && lower ? (lower.g + mid.g) / 2 : mid.g;
+        fv = Math.abs(g - this.est) > 2.5 && this.est > 1 ? 7 : 0;
+      }
     } else if (Math.random() < 0.03) {
+      // 窗口外的雜散目標（10 m 外）
       n = 1;
-      rd = 0.8 + Math.random();
-      rv = -2 + Math.random() * 8;
-      e = Math.round(5000 + Math.random() * 50000);
+      angle = Math.round(-20 + Math.random() * 40);
+      rd = 10;
+      rv = Math.round(-7 + Math.random() * 29) / 3.6;
+      snr = Math.round(10 + Math.random() * 30);
       g = -1;
       fv = 3;
     }
@@ -284,7 +304,7 @@ export class DemoTransport implements RadarTransport {
     const rearLine = this.rear.step(this.rearConfig);
     if (rearLine) this.lines.emit(rearLine);
     this.lines.emit(
-      `R=1 ST=${state} V=${speed.toFixed(2)} SD=${sd.toFixed(2)} Q=${q} WD=0 FN=${this.frame} N=${n} RD=${rd.toFixed(2)} RV=${rv.toFixed(2)} E=${e} G=${g.toFixed(2)} FV=${fv} DR=${this.dr.toFixed(1)} W=${wheel.toFixed(2)} DW=${this.dw.toFixed(1)} T=${Math.floor(300 + this.t)}`,
+      `R=1 RO=0 ST=${state} V=${speed.toFixed(2)} SD=${sd.toFixed(2)} Q=${q} WD=0 FN=${this.frame} N=${n} A=${angle} RD=${rd} RV=${rv.toFixed(2)} S=${snr} G=${g.toFixed(2)} FV=${fv} DR=${this.dr.toFixed(1)} W=${wheel.toFixed(2)} DW=${this.dw.toFixed(1)} T=${Math.floor(300 + this.t)}`,
     );
   }
 }
@@ -336,7 +356,7 @@ export function demoTrips(now: number): SavedTrip[] {
       if (v >= 0.5) movingS += 1;
       maxMps = Math.max(maxMps, v);
       // 和網頁一樣的超速判斷（持續 0.5 秒進入、低於速限 − 1 km/h 持續 1 秒解除）
-      const next = stepOverspeed(over, overspeedEvidence({ state: 'tracking', speedMps: v }, limitMps, null), startedAt + t * 1000);
+      const next = stepOverspeed(over, overspeedEvidence({ state: 'tracking', speedMps: v }, limitMps), startedAt + t * 1000);
       if (next.active && !over.active) overCount += 1;
       if (next.active && over.active) overS += 1;
       over = next;

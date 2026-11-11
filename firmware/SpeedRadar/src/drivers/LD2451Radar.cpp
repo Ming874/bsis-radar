@@ -1,6 +1,7 @@
 #include "LD2451Radar.h"
 
 #include <driver/gpio.h>
+#include <stdarg.h>
 
 namespace {
 
@@ -20,24 +21,44 @@ constexpr uint32_t kNoValidMs        = 15000;  // 有收到位元組、但這麼
 constexpr uint32_t kRetryMs          = 5000;
 constexpr uint32_t kMaxRetryMs       = 30000;
 constexpr uint32_t kRxOnlyRetryMs    = 30000;  // 只接收模式：隔多久再試一次指令（可能後來接上了 RX）
-constexpr uint8_t  kDelayS           = 1;      // 模組的警報延遲用最小值：警示保持由 ESP32 自己做（RearThreat）
+constexpr uint8_t  kDelayS           = 1;      // 模組的警報延遲用最小值：保持由 ESP32 自己做
 constexpr uint8_t  kTriggerCount     = 1;      // 模組的累計觸發用最小值：確認由 ESP32 自己做，不多等
 constexpr uint16_t kMaxBytesPerPump  = 256;
 constexpr uint8_t  kEnableValue[2]   = {0x01, 0x00};
+
+const char* directionName(uint8_t d) {
+  switch (d) {
+    case ld2451::kDirectionAway:     return "只回報遠離";
+    case ld2451::kDirectionApproach: return "只回報靠近";
+    case ld2451::kDirectionBoth:     return "靠近遠離都回報";
+    default:                         return "方向未知";
+  }
+}
 
 }  // namespace
 
 LD2451Radar::LD2451Radar(HardwareSerial& port, const Settings& settings, Print& log)
     : port_(port), settings_(settings), log_(log) {}
 
+// 每行訊息都加上這顆雷達的名稱，兩顆雷達的訊息才分得出來
+void LD2451Radar::say(const char* format, ...) {
+  char line[192];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(line, sizeof(line), format, args);
+  va_end(args);
+  log_.printf("[%s] %s\n", settings_.name, line);
+}
+
 void LD2451Radar::setDetection(const Detection& d, uint32_t nowMs) {
-  const bool same = d.maxDistanceM == detection_.maxDistanceM && d.minSpeedKmh == detection_.minSpeedKmh &&
-                    d.snr == detection_.snr;
+  const bool same = d.maxDistanceM == detection_.maxDistanceM && d.direction == detection_.direction &&
+                    d.minSpeedKmh == detection_.minSpeedKmh && d.snr == detection_.snr;
   if (begun_ && same) return;
   detection_ = d;
   if (!begun_) return;
   if (state_ == State::Online && !receiveOnly_) {
-    log_.printf("[後方雷達] 偵測設定改為 %u m、%u km/h、訊噪比 %u，重新寫入\n", d.maxDistanceM, d.minSpeedKmh, d.snr);
+    say("偵測設定改為 %u m、%s、%u km/h、訊噪比 %u，重新寫入", d.maxDistanceM, directionName(d.direction), d.minSpeedKmh,
+        d.snr);
     startConfig(Step::Enable, nowMs);
   }
 }
@@ -48,13 +69,15 @@ void LD2451Radar::begin(uint32_t nowMs) {
     state_ = State::Disabled;
     return;
   }
-  log_.printf("[後方雷達] LD2451：TX → GPIO%d", settings_.rxPin);
-  if (settings_.txPin >= 0) log_.printf("、RX → GPIO%d", settings_.txPin);
-  log_.println("，尋找鮑率中...");
+  if (settings_.txPin >= 0) {
+    say("LD2451：TX → GPIO%d、RX → GPIO%d，尋找鮑率中...", settings_.rxPin, settings_.txPin);
+  } else {
+    say("LD2451：TX → GPIO%d，尋找鮑率中...", settings_.rxPin);
+  }
   startSearch(nowMs, true);
 }
 
-bool LD2451Radar::readFrame(RearFrame& out) {
+bool LD2451Radar::readFrame(RadarFrame& out) {
   if (queueCount_ == 0) return false;
   out        = queue_[queueHead_];
   queueHead_ = (queueHead_ + 1) % kQueueSize;
@@ -143,7 +166,7 @@ void LD2451Radar::pumpBytes(uint32_t nowMs) {
 }
 
 void LD2451Radar::handleReport(uint32_t nowMs) {
-  RearFrame f;
+  RadarFrame f;
   if (!decodeLD2451Report(parser_.payload(), parser_.length(), f)) {
     decodeErrors_++;  // 位元錯誤：丟掉這一筆
     return;
@@ -165,8 +188,8 @@ void LD2451Radar::handleAck(const LD2451Ack& ack, uint32_t nowMs) {
   if (ack.command == ld2451::kCmdEnableConfig) enablePending_ = false;
   if (ack.command == ld2451::kCmdEnableConfig && ack.ok && (state_ == State::Searching || state_ == State::Online)) {
     // 指令有回覆：完整模式。雷達已在設定狀態，接著讀韌體與設定
-    if (state_ == State::Searching) log_.printf("[後方雷達] %lu bps，指令有回覆\n", static_cast<unsigned long>(baud_));
-    else log_.println("[後方雷達] 指令開始有回覆（剛接上 LD2451 RX？），改成完整模式");
+    if (state_ == State::Searching) say("%lu bps，指令有回覆", static_cast<unsigned long>(baud_));
+    else say("指令開始有回覆（剛接上 LD2451 RX？），改成完整模式");
     goodBaudIndex_ = baudIndex_;
     receiveOnly_ = false;
     startConfig(Step::ReadFirmware, nowMs);
@@ -175,7 +198,7 @@ void LD2451Radar::handleAck(const LD2451Ack& ack, uint32_t nowMs) {
   if (state_ != State::Configuring || !waitingAck_ || ack.command != stepCommand(step_)) return;
   waitingAck_ = false;
   if (!ack.ok) {
-    log_.printf("[後方雷達] 指令 0x%02X 失敗\n", ack.command);
+    say("指令 0x%02X 失敗", ack.command);
     finishConfig(nowMs, false);
     return;
   }
@@ -185,28 +208,28 @@ void LD2451Radar::handleAck(const LD2451Ack& ack, uint32_t nowMs) {
     case Step::ReadFirmware:
       if (ack.dataLen >= 8) {
         snprintf(firmware_, sizeof(firmware_), "V%u.%02u.%02X%02X%02X%02X", d[3], d[2], d[7], d[6], d[5], d[4]);
-        log_.printf("[後方雷達] 韌體 %s\n", firmware_);
+        say("韌體 %s", firmware_);
       }
       break;
     case Step::GetTarget:
       if (ack.dataLen >= 4) {
-        log_.printf("[後方雷達] 讀回目標參數：最大距離 %u m、方向 %u、最低速度 %u km/h、延遲 %u s\n", d[0], d[1], d[2], d[3]);
-        needTarget_ = d[0] != detection_.maxDistanceM || d[1] != ld2451::kDirectionApproach ||
+        say("讀回目標參數：最大距離 %u m、方向 %u、最低速度 %u km/h、延遲 %u s", d[0], d[1], d[2], d[3]);
+        needTarget_ = d[0] != detection_.maxDistanceM || d[1] != detection_.direction ||
                       d[2] != detection_.minSpeedKmh || d[3] != kDelayS;
       }
       break;
     case Step::GetSensitivity:
       if (ack.dataLen >= 2) {
-        log_.printf("[後方雷達] 讀回靈敏度：累計觸發 %u 次、訊噪比門檻 %u\n", d[0], d[1]);
+        say("讀回靈敏度：累計觸發 %u 次、訊噪比門檻 %u", d[0], d[1]);
         needSens_ = d[0] != kTriggerCount || d[1] != detection_.snr;
       }
       break;
     case Step::SetTarget:
-      log_.printf("[後方雷達] 已寫入目標參數：%u m、只回報靠近、%u km/h、延遲 %u s\n", detection_.maxDistanceM,
-                  detection_.minSpeedKmh, kDelayS);
+      say("已寫入目標參數：%u m、%s、%u km/h、延遲 %u s", detection_.maxDistanceM, directionName(detection_.direction),
+          detection_.minSpeedKmh, kDelayS);
       break;
     case Step::SetSensitivity:
-      log_.printf("[後方雷達] 已寫入靈敏度：累計觸發 %u 次、訊噪比門檻 %u\n", kTriggerCount, detection_.snr);
+      say("已寫入靈敏度：累計觸發 %u 次、訊噪比門檻 %u", kTriggerCount, detection_.snr);
       break;
     case Step::Enable:
     case Step::End:
@@ -240,18 +263,17 @@ void LD2451Radar::runSearch(uint32_t nowMs) {
     state_            = State::Online;
     stateSinceMs_     = nowMs;
     failures_         = 0;
-    log_.printf("[後方雷達] %lu bps 收得到資料，但指令沒有回覆：只接收，使用雷達目前存的設定"
-                "（要讓 ESP32 寫入設定，把 LD2451 RX 接到 GPIO%d）\n",
-                static_cast<unsigned long>(baud_), settings_.txPin);
+    say("%lu bps 收得到資料，但指令沒有回覆：只接收，使用雷達目前存的設定"
+        "（要讓 ESP32 寫入設定，把 LD2451 RX 接到 GPIO%d）",
+        static_cast<unsigned long>(baud_), settings_.txPin);
     return;
   }
   if (heardReport_ || nowMs - stateSinceMs_ < kSearchWindowMs) return;
 
   if (baudBytes_ > 0) {
     // 有收到東西但解不出資料框：鮑率不對，或線路有位元錯誤（原廠 115200 時多半是後者）
-    log_.printf("[後方雷達] %lu bps：收到 %lu bytes、%lu 個格式錯誤的資料框，沒有解出資料框\n",
-                static_cast<unsigned long>(baud_), static_cast<unsigned long>(baudBytes_),
-                static_cast<unsigned long>(badFrames() - badAtOpen_));
+    say("%lu bps：收到 %lu bytes、%lu 個格式錯誤的資料框，沒有解出資料框", static_cast<unsigned long>(baud_),
+        static_cast<unsigned long>(baudBytes_), static_cast<unsigned long>(badFrames() - badAtOpen_));
   }
   if (++baudTried_ >= kBaudCount) {
     goOffline(nowMs, "每個鮑率都沒有收到資料（檢查 5V、GND、LD2451 TX 是否接到 ESP32 RX）");
@@ -293,7 +315,7 @@ void LD2451Radar::sendStep(uint32_t nowMs) {
       sendCommand(ld2451::kCmdEnableConfig, kEnableValue, sizeof(kEnableValue));
       break;
     case Step::SetTarget: {
-      const uint8_t v[4] = {detection_.maxDistanceM, ld2451::kDirectionApproach, detection_.minSpeedKmh, kDelayS};
+      const uint8_t v[4] = {detection_.maxDistanceM, detection_.direction, detection_.minSpeedKmh, kDelayS};
       sendCommand(ld2451::kCmdSetTarget, v, sizeof(v));
       break;
     }
@@ -316,7 +338,7 @@ void LD2451Radar::runConfig(uint32_t nowMs) {
     sendStep(nowMs);
     return;
   }
-  log_.printf("[後方雷達] 指令 0x%02X 沒有回覆\n", stepCommand(step_));
+  say("指令 0x%02X 沒有回覆", stepCommand(step_));
   finishConfig(nowMs, false);
 }
 
@@ -344,7 +366,7 @@ void LD2451Radar::finishConfig(uint32_t nowMs, bool ok) {
   lastFrameMs_  = nowMs;  // 設定期間雷達不送資料框，從現在開始重新計算
   lastByteMs_   = nowMs;
   failures_     = 0;
-  log_.println(ok ? "[後方雷達] 設定完成，開始讀取資料" : "[後方雷達] 設定沒有完成，先用雷達目前的設定讀取資料");
+  say("%s", ok ? "設定完成，開始讀取資料" : "設定沒有完成，先用雷達目前的設定讀取資料");
 }
 
 void LD2451Radar::goOffline(uint32_t nowMs, const char* reason) {
@@ -355,5 +377,5 @@ void LD2451Radar::goOffline(uint32_t nowMs, const char* reason) {
   if (failures_ < 8) failures_++;
   retryDelayMs_ = kRetryMs << (failures_ - 1);
   if (retryDelayMs_ > kMaxRetryMs) retryDelayMs_ = kMaxRetryMs;
-  log_.printf("[後方雷達] 離線：%s；%lu 秒後重試\n", reason, static_cast<unsigned long>(retryDelayMs_ / 1000));
+  say("離線：%s；%lu 秒後重試", reason, static_cast<unsigned long>(retryDelayMs_ / 1000));
 }

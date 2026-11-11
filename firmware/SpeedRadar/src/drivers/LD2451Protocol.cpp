@@ -91,19 +91,19 @@ LD2451FrameType LD2451FrameParser::push(uint8_t b) {
   return LD2451FrameType::None;
 }
 
-bool decodeLD2451Report(const uint8_t* payload, uint16_t len, RearFrame& out) {
-  out = RearFrame();
+bool decodeLD2451Report(const uint8_t* payload, uint16_t len, RadarFrame& out) {
+  out = RadarFrame();
   if (len == 0) return true;  // 沒有目標
   if (payload == nullptr || len < 2) return false;
   const uint8_t count = payload[0];
-  if (count > kRearMaxTargets || len < 2u + 5u * count) return false;
+  if (count > kRadarMaxTargets || len < 2u + 5u * count) return false;
   out.alarm = payload[1];
   for (uint8_t i = 0; i < count; i++) {
     const uint8_t* p     = payload + 2 + 5 * i;
     const int      angle = static_cast<int>(p[0]) - 0x80;
     if (angle < -kMaxAngleDeg || angle > kMaxAngleDeg) return false;
     if (p[2] > 1 || p[3] > kMaxSpeedKmh) return false;
-    RearTarget& t = out.targets[i];
+    RadarTarget& t = out.targets[i];
     t.angleDeg  = static_cast<int8_t>(angle);
     t.distanceM = p[1];
     t.direction = p[2];
