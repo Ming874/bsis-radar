@@ -21,7 +21,7 @@
 #pragma once
 #include <stdint.h>
 
-#include "RadarFrame.h"
+#include "RearFrame.h"
 #include "SpeedConfig.h"
 
 enum class RearLevel : uint8_t {
@@ -62,7 +62,7 @@ constexpr float    kTrendDecisiveMps = 1.5f;    // 斜率超過這個值才算�
 class RearThreat {
  public:
   // 每收到一個 LD2451 資料框呼叫一次
-  void onFrame(const RadarFrame& frame, uint32_t nowMs, const RearConfig& cfg);
+  void onFrame(const RearFrame& frame, uint32_t nowMs, const RearConfig& cfg);
 
   // 每次 loop 都呼叫：處理「資料框停了」的逾時與警示保持
   void update(uint32_t nowMs, const RearConfig& cfg);

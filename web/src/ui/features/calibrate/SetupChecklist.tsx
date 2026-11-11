@@ -3,7 +3,7 @@
  */
 import { useShallow } from 'zustand/react/shallow';
 import { openSheet, useRadar } from '../../../application/container';
-import { DEFAULT_CONFIG, FIRMWARE_MAJOR } from '../../../domain/protocol';
+import { DEFAULT_CONFIG } from '../../../domain/protocol';
 import { AlertIcon, CheckCircleIcon, CircleIcon, ListGroup, Row, cx, type IconProps } from '../../kit';
 import { goTab } from '../../shell/tabs';
 import type { ComponentType } from 'react';
@@ -43,8 +43,6 @@ export function SetupChecklist() {
       connected: r.connection.status === 'connected',
       legacy: r.legacyFirmware,
       config: r.config,
-      radarOnline: r.connection.status === 'connected' && r.telemetry ? r.telemetry.radarOnline : null,
-      receiveOnly: r.telemetry?.receiveOnly ?? false,
     })),
   );
   const c = s.config;
@@ -56,7 +54,7 @@ export function SetupChecklist() {
       <Item
         state={ready ? 'done' : s.legacy ? 'warn' : 'todo'}
         label="連線裝置"
-        detail={ready ? `韌體 v${c.firmware}` : s.legacy ? `韌體 v${s.legacy} 過舊，請燒錄 ${FIRMWARE_MAJOR}.x` : '按這裡連線 BSIS-Speed'}
+        detail={ready ? `韌體 v${c.firmware}` : s.legacy ? `韌體 v${s.legacy} 過舊，請燒錄 3.x` : '按這裡連線 BSIS-Speed'}
         onClick={() => openSheet('connection')}
       />
       <Item
@@ -66,18 +64,14 @@ export function SetupChecklist() {
         onClick={() => scrollToId('mount')}
       />
       <Item
-        state={s.radarOnline === null ? 'todo' : s.radarOnline && !s.receiveOnly ? 'done' : 'warn'}
-        label="測速雷達"
-        detail={
-          s.radarOnline === null
-            ? '連線後讀取'
-            : !s.radarOnline
-              ? '離線：檢查 5 V 與 GPIO16／17 接線'
-              : s.receiveOnly
-                ? '只接收：LD2451 RX 沒接到 GPIO17，設定寫不進去'
-                : '在線，偵測設定已寫入雷達'
-        }
-        onClick={() => goTab('data')}
+        state={!c ? 'todo' : c.radialLimitMps > 3.5 ? 'done' : 'warn'}
+        label="雷達測速上限"
+        detail={!c ? '連線後讀取' : c.radialLimitMps > 3.5 ? `VMAX ${c.radialLimitMps.toFixed(2)} m/s（已調高）` : `VMAX ${c.radialLimitMps.toFixed(2)} m/s，需實車驗收（上手文件 §10.1）`}
+        onClick={() => {
+          goTab('settings');
+          // 換頁後再捲到「裝置參數」
+          setTimeout(() => scrollToId('device'), 120);
+        }}
       />
     </ListGroup>
   );

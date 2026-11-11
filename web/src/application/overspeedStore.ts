@@ -12,7 +12,8 @@ export const ALERT_COOLDOWN_MS = 5000;
 export interface OverspeedStore {
   active: boolean;
   since: number | null; // 這次超速開始的時間
-  onTelemetry: (t: Telemetry, limitMps: number) => void;
+  /** @param unambiguousMps 雷達不折疊的最高對地速度（沒有裝置設定時 null） */
+  onTelemetry: (t: Telemetry, limitMps: number, unambiguousMps: number | null) => void;
   /** 關閉警示、改速限、斷線或資料中斷時呼叫 */
   reset: () => void;
 }
@@ -30,8 +31,8 @@ export function createOverspeedStore(deps: OverspeedStoreDeps) {
     active: false,
     since: null,
 
-    onTelemetry: (t, limitMps) => {
-      const next = stepOverspeed(state, overspeedEvidence(t, limitMps), t.receivedAt);
+    onTelemetry: (t, limitMps, unambiguousMps) => {
+      const next = stepOverspeed(state, overspeedEvidence(t, limitMps, unambiguousMps), t.receivedAt);
       const entered = next.active && !state.active;
       state = next;
       if (next.active !== get().active || next.since !== get().since) set({ active: next.active, since: next.since });

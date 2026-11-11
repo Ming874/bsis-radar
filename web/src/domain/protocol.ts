@@ -1,13 +1,12 @@
 /**
- * 【領域層】ESP32 ⇄ 網頁的文字協定（與韌體 4.0 的 src/comm/Telemetry、CommandParser 對應，見 docs/PROTOCOL.md）。
- * 4.0 起兩顆雷達都是 HLK-LD2451：一顆斜照路面測速、一顆朝後偵測來車。
+ * 【領域層】ESP32 ⇄ 網頁的文字協定（與韌體 3.1 的 src/comm/Telemetry、CommandParser 對應，見 docs/PROTOCOL.md）。
  *
  * ESP32 → 網頁（每行以 '\n' 結尾）：
- *   R=1 RO=0 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=3 A=-2 RD=2 RV=4.72 S=12 G=5.40 FV=0 DR=1234.5 W=5.51 DW=1240.2 T=812
+ *   R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=0 DR=1234.5 W=5.51 DW=1240.2 T=812
  *   REAR ON=1 RO=0 LV=1 D=12.4 V=4.17 TTC=3.0 HOLD=0 N=2 CNT=3 FN=812 X=-3/12/15,6/31/-40
- *   CFG ANGLE=30.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 GSNR=4 WHEEL=2105 RMIN=0.71 RMAX=8.13 RANGE=15 RSPD=5 TTC=2.5 RSNR=4 RDET=25 FW=4.0.0
+ *   CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=3.28 RMIN=0.62 RMAX=2.15 RANGE=15 RSPD=5 TTC=2.5 RSNR=4 RDET=25 FW=3.1.0
  *   OK saved / ERR <原因>
- * 網頁 → ESP32：GET、ANGLE、HEIGHT、DIR、MODEL、CAL、GSNR、WHEEL、RANGE、RSPD、TTC、RSNR、DEFAULTS、REBOOT
+ * 網頁 → ESP32：GET、ANGLE、HEIGHT、DIR、MODEL、CAL、RTHR、WHEEL、VMAX、RANGE、RSPD、TTC、RSNR、DEFAULTS、REBOOT
  */
 import type {
   DeviceCommand,
@@ -24,11 +23,12 @@ import type {
 
 /** 各參數允許範圍（與韌體 SpeedConfig.h 的 limits 相同） */
 export const LIMITS = {
-  angleDeg: { min: 10, max: 75 },
+  angleDeg: { min: 15, max: 75 },
   heightM: { min: 0.15, max: 1.5 },
   calibration: { min: 0.5, max: 2 },
-  radarSnr: { min: 3, max: 8 },
+  radarThreshold: { min: 1, max: 50 },
   wheelMm: { min: 1000, max: 3000 },
+  radialLimitMps: { min: 2, max: 20 },
 } as const;
 
 /** 後方來車參數的允許範圍（與韌體 SpeedConfig.h 的 limits 相同） */
@@ -54,30 +54,31 @@ export const REAR_HOLD_MS = 1500;
 
 /** 韌體預設值（SpeedConfig::defaults） */
 export const DEFAULT_CONFIG: EditableConfig = {
-  angleDeg: 30,
+  angleDeg: 45,
   heightM: 0.7,
   direction: 1,
   model: 'fixedAngle',
   calibration: 1,
-  radarSnr: 4,
+  radarThreshold: 5,
   wheelMm: 2105,
+  radialLimitMps: 3.28,
 };
 
 /** 這個網頁對應的韌體主版本 */
-export const FIRMWARE_MAJOR = 4;
+export const FIRMWARE_MAJOR = 3;
 
-// 韌體的編號：ST 6、FV 2／6／9 是 3.x（C4001）的超出測速上限、外插、接近上限、折疊還原，4.0 起不再出現
-const STATES: readonly (SpeedState | undefined)[] = ['noRadar', 'stopped', 'acquiring', 'tracking', 'holding', 'lost'];
-const VERDICTS: readonly (FrameVerdict | undefined)[] = [
+const STATES: readonly SpeedState[] = ['noRadar', 'stopped', 'acquiring', 'tracking', 'holding', 'lost', 'overRange'];
+const VERDICTS: readonly FrameVerdict[] = [
   'accepted',
   'noTarget',
-  undefined,
+  'repeated',
   'outOfGate',
   'wrongDirection',
   'static',
-  undefined,
+  'atLimit',
   'outlier',
   'acquiring',
+  'unfolded',
 ];
 const MODELS: readonly SpeedModel[] = ['fixedAngle', 'rangeGeometry'];
 const REAR_LEVELS: readonly RearLevel[] = ['safe', 'caution', 'danger'];
@@ -110,7 +111,7 @@ function nonNegative(value: number | undefined): number | null {
   return value !== undefined && value >= 0 ? value : null;
 }
 
-function pick<T>(list: readonly (T | undefined)[], index: number | undefined, fallback: T): T {
+function pick<T>(list: readonly T[], index: number | undefined, fallback: T): T {
   if (index === undefined || !Number.isInteger(index)) return fallback;
   return list[index] ?? fallback;
 }
@@ -121,14 +122,10 @@ function parseTelemetry(text: string): ParsedLine {
 
   const targets = Math.max(0, Math.round(num(p, 'N') ?? 0));
   const wheelMps = num(p, 'W');
-  // 代表目標：RD = -1 代表這個資料框沒有（沒有目標，或雷達離線）
-  const rangeM = targets > 0 ? nonNegative(num(p, 'RD')) : null;
-  const radarOnline = num(p, 'R') === 1;
   return {
     kind: 'telemetry',
     telemetry: {
-      radarOnline,
-      receiveOnly: radarOnline && num(p, 'RO') === 1,
+      radarOnline: num(p, 'R') === 1,
       state: pick(STATES, num(p, 'ST'), 'noRadar'),
       speedMps: nonNegative(num(p, 'V')),
       sigmaMps: Math.max(0, num(p, 'SD') ?? 0),
@@ -136,10 +133,9 @@ function parseTelemetry(text: string): ParsedLine {
       wrongDirPct: Math.min(100, Math.max(0, num(p, 'WD') ?? 0)),
       frame: Math.max(0, num(p, 'FN') ?? 0),
       targets,
-      angleDeg: rangeM === null ? null : (num(p, 'A') ?? null),
-      rangeM,
-      radialMps: rangeM === null ? null : (num(p, 'RV') ?? null),
-      snr: rangeM === null ? null : nonNegative(num(p, 'S')),
+      rangeM: targets > 0 ? nonNegative(num(p, 'RD')) : null,
+      radialMps: targets > 0 ? (num(p, 'RV') ?? null) : null,
+      energy: Math.max(0, num(p, 'E') ?? 0),
       groundMps: nonNegative(num(p, 'G')),
       verdict: pick(VERDICTS, num(p, 'FV'), 'noTarget'),
       radarDistanceM: Math.max(0, num(p, 'DR') ?? 0),
@@ -223,8 +219,9 @@ function parseConfig(text: string): ParsedLine {
       direction: dir,
       model: pick(MODELS, model, d.model),
       calibration: cal,
-      radarSnr: num(p, 'GSNR') ?? d.radarSnr,
+      radarThreshold: num(p, 'RTHR') ?? d.radarThreshold,
       wheelMm: num(p, 'WHEEL') ?? d.wheelMm,
+      radialLimitMps: num(p, 'VMAX') ?? d.radialLimitMps,
       gateMinM: num(p, 'RMIN') ?? 0,
       gateMaxM: num(p, 'RMAX') ?? 0,
       rear: parseRearConfig(p),
@@ -290,14 +287,17 @@ export function buildCommand(cmd: DeviceCommand): string {
     case 'calibration':
       assertRange(cmd.factor, LIMITS.calibration, '校正係數');
       return `CAL ${compact(cmd.factor, 4)}`;
-    case 'radarSnr':
-      assertRange(cmd.value, LIMITS.radarSnr, '測速雷達訊噪比門檻');
-      assertInteger(cmd.value, '測速雷達訊噪比門檻');
-      return `GSNR ${cmd.value}`;
+    case 'radarThreshold':
+      assertRange(cmd.value, LIMITS.radarThreshold, '雷達門檻');
+      assertInteger(cmd.value, '雷達門檻');
+      return `RTHR ${cmd.value}`;
     case 'wheel':
       assertRange(cmd.mm, LIMITS.wheelMm, '輪周長');
       assertInteger(cmd.mm, '輪周長');
       return `WHEEL ${cmd.mm}`;
+    case 'radialLimit':
+      assertRange(cmd.mps, LIMITS.radialLimitMps, '雷達測速上限');
+      return `VMAX ${compact(cmd.mps, 2)}`;
     case 'rearRange':
       assertRange(cmd.m, REAR_LIMITS.rangeM, '後方警示距離');
       assertInteger(cmd.m, '後方警示距離');
@@ -335,30 +335,29 @@ export function diffConfig(current: EditableConfig, next: EditableConfig): Devic
   if (current.direction !== next.direction) cmds.push({ type: 'direction', dir: next.direction });
   if (current.model !== next.model) cmds.push({ type: 'model', model: next.model });
   if (!same(current.calibration, next.calibration, 4)) cmds.push({ type: 'calibration', factor: next.calibration });
-  if (current.radarSnr !== next.radarSnr) cmds.push({ type: 'radarSnr', value: next.radarSnr });
+  if (current.radarThreshold !== next.radarThreshold) cmds.push({ type: 'radarThreshold', value: next.radarThreshold });
   if (current.wheelMm !== next.wheelMm) cmds.push({ type: 'wheel', mm: next.wheelMm });
+  if (!same(current.radialLimitMps, next.radialLimitMps, 2)) cmds.push({ type: 'radialLimit', mps: next.radialLimitMps });
   return cmds;
 }
 
 /**
- * 由安裝角度與高度算出的地面距離窗口（與韌體 groundWindow 相同，網頁預覽用）。
- * LD2451 的距離是整數公尺，韌體把窗口兩端往外取整（minDistanceM、maxDistanceM）
+ * 雷達「不模糊」的最高對地速度（m/s）：徑向速度 = 對地速度 × cos θ，超過 VMAX 之後 C4001 的讀值會折疊
+ * （韌體靠連續追蹤還原，見 docs/ALGORITHM.md §2）。
  */
-export function groundWindow(
-  angleDeg: number,
-  heightM: number,
-): { minM: number; maxM: number; minDistanceM: number; maxDistanceM: number; boresightM: number } {
+export function unambiguousGroundMps(radialLimitMps: number, angleDeg: number, calibration = 1): number {
+  return (calibration * radialLimitMps) / Math.cos((angleDeg * Math.PI) / 180);
+}
+
+/** 由安裝角度與高度算出的地面距離窗口（與韌體 groundWindow 相同，網頁預覽用） */
+export function groundWindow(angleDeg: number, heightM: number): { minM: number; maxM: number; boresightM: number } {
   const rad = (d: number) => (d * Math.PI) / 180;
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-  const steep = clamp(angleDeg + 30, 5, 85);
-  const shallow = clamp(angleDeg - 25, 5, 85);
-  const minM = Math.max(0, heightM / Math.sin(rad(steep)) - 0.1);
-  const maxM = Math.min(10, heightM / Math.sin(rad(shallow)) + 0.1);
+  const steep = clamp(angleDeg + 30, 8, 85);
+  const shallow = clamp(angleDeg - 25, 8, 85);
   return {
-    minM,
-    maxM,
-    minDistanceM: Math.floor(minM),
-    maxDistanceM: Math.ceil(maxM),
+    minM: Math.max(0.3, heightM / Math.sin(rad(steep)) - 0.1),
+    maxM: Math.min(25, heightM / Math.sin(rad(shallow)) + 0.1),
     boresightM: heightM / Math.sin(rad(angleDeg)),
   };
 }

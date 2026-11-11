@@ -18,10 +18,8 @@ double clampd(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? h
 size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
   const bool online = s.radarOnline;
   const bool frame  = online && s.hasFrame;
-  const bool target = frame && s.result.target >= 0 && s.result.target < s.raw.count &&
-                      s.result.target < static_cast<int8_t>(kRadarMaxTargets);
+  const bool target = frame && s.raw.targets > 0;
   const bool ground = frame && s.result.hasGround;
-  const RadarTarget& t = s.raw.targets[target ? s.result.target : 0];
 
   // 輪速和雷達無關：雷達離線時照樣送
   char wheel[40] = "";
@@ -32,20 +30,18 @@ size_t formatTelemetry(const TelemetrySnapshot& s, char* out, size_t cap) {
 
   const int n = snprintf(
       out, cap,
-      "R=%d RO=%d ST=%u V=%.2f SD=%.2f Q=%u WD=%u FN=%lu N=%u A=%d RD=%d RV=%.2f S=%u G=%.2f FV=%u DR=%.1f%s T=%lu\n",
+      "R=%d ST=%u V=%.2f SD=%.2f Q=%u WD=%u FN=%lu N=%u RD=%.2f RV=%.2f E=%lu G=%.2f FV=%u DR=%.1f%s T=%lu\n",
       online ? 1 : 0,
-      online && s.receiveOnly ? 1 : 0,
       static_cast<unsigned>(online ? s.state : SpeedState::NoRadar),
       online && s.hasSpeed ? clampf(s.speedMps, 0.0f, 99.99f) : -1.0f,
       online && s.hasSpeed ? clampf(s.sigmaMps, 0.0f, 99.99f) : 0.0f,
       static_cast<unsigned>(online ? s.qualityPct : 0),
       static_cast<unsigned>(online ? s.wrongDirPct : 0),
       static_cast<unsigned long>(s.frame),
-      frame ? static_cast<unsigned>(s.raw.count < kRadarMaxTargets ? s.raw.count : kRadarMaxTargets) : 0U,
-      target ? static_cast<int>(t.angleDeg) : 0,
-      target ? static_cast<int>(t.distanceM) : -1,
-      target ? clampf(radialMps(t), -99.99f, 99.99f) : 0.0f,
-      target ? static_cast<unsigned>(t.snr) : 0U,
+      target ? static_cast<unsigned>(s.raw.targets) : 0U,
+      target ? clampf(s.raw.rangeM, 0.0f, 99.99f) : -1.0f,
+      target ? clampf(s.raw.speedMps, -99.99f, 99.99f) : 0.0f,
+      target ? static_cast<unsigned long>(s.raw.energy) : 0UL,
       ground ? clampf(s.result.groundMps, 0.0f, 99.99f) : -1.0f,
       static_cast<unsigned>(frame ? s.result.verdict : FrameVerdict::NoTarget),
       clampd(s.radarDistanceM, 0.0, 9999999.9),
@@ -61,9 +57,9 @@ size_t formatRear(const RearSnapshot& s, char* out, size_t cap) {
   char targets[80] = "";
   if (s.hasFrame && s.raw.count > 0) {
     size_t used = 0;
-    const uint8_t n = s.raw.count < kRadarMaxTargets ? s.raw.count : kRadarMaxTargets;
+    const uint8_t n = s.raw.count < kRearMaxTargets ? s.raw.count : kRearMaxTargets;
     for (uint8_t i = 0; i < n; i++) {
-      const RadarTarget& t = s.raw.targets[i];
+      const RearTarget& t = s.raw.targets[i];
       const int speed = t.approaching() ? t.speedKmh : -static_cast<int>(t.speedKmh);
       const int w = snprintf(targets + used, sizeof(targets) - used, "%s%d/%u/%d", i == 0 ? " X=" : ",",
                              static_cast<int>(t.angleDeg), static_cast<unsigned>(t.distanceM), speed);
@@ -91,15 +87,16 @@ size_t formatRear(const RearSnapshot& s, char* out, size_t cap) {
 size_t formatConfig(const SpeedConfig& c, const char* firmwareVersion, char* out, size_t cap) {
   const GroundWindow w = groundWindow(c);
   const int n = snprintf(out, cap,
-                         "CFG ANGLE=%.1f HEIGHT=%.2f DIR=%d MODEL=%u CAL=%.4f GSNR=%u WHEEL=%u RMIN=%.2f RMAX=%.2f "
+                         "CFG ANGLE=%.1f HEIGHT=%.2f DIR=%d MODEL=%u CAL=%.4f RTHR=%u WHEEL=%u VMAX=%.2f RMIN=%.2f RMAX=%.2f "
                          "RANGE=%u RSPD=%u TTC=%.1f RSNR=%u RDET=%u FW=%s\n",
                          c.angleDeg,
                          c.heightM,
                          static_cast<int>(c.direction),
                          static_cast<unsigned>(c.model),
                          c.calibration,
-                         static_cast<unsigned>(c.radarSnr),
+                         static_cast<unsigned>(c.radarThreshold),
                          static_cast<unsigned>(c.wheelMm),
+                         c.radialLimitMps,
                          w.minRangeM,
                          w.maxRangeM,
                          static_cast<unsigned>(c.rear.rangeM),

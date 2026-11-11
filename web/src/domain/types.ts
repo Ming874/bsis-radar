@@ -1,34 +1,41 @@
 /**
  * 【領域層】資料型別。純 TypeScript，不依賴 React 或瀏覽器 API。
- * 欄位與韌體 4.0 的 src/comm/Telemetry.h 對應，定義見 docs/PROTOCOL.md。
- * 4.0 起測速雷達從 C4001 換成 HLK-LD2451（和後方雷達同型號）。
+ * 欄位與韌體 3.1 的 src/comm/Telemetry.h 對應，定義見 docs/PROTOCOL.md。
  */
 
 /** 估計器狀態（韌體 ST 欄位） */
-export type SpeedState = 'noRadar' | 'stopped' | 'acquiring' | 'tracking' | 'holding' | 'lost';
+export type SpeedState = 'noRadar' | 'stopped' | 'acquiring' | 'tracking' | 'holding' | 'lost' | 'overRange';
 
-/** 每一個雷達資料框的判斷結果（韌體 FV 欄位） */
-export type FrameVerdict = 'accepted' | 'noTarget' | 'outOfGate' | 'wrongDirection' | 'static' | 'outlier' | 'acquiring';
+/** 每一筆雷達資料框的判斷結果（韌體 FV 欄位） */
+export type FrameVerdict =
+  | 'accepted'
+  | 'noTarget'
+  | 'repeated'
+  | 'outOfGate'
+  | 'wrongDirection'
+  | 'static'
+  | 'atLimit'
+  | 'outlier'
+  | 'acquiring'
+  | 'unfolded';
 
 /** 由單筆量測換算對地速度的方式（韌體 MODEL） */
 export type SpeedModel = 'fixedAngle' | 'rangeGeometry';
 
-/** ESP32 送來的一行遙測：測速雷達每一個資料框一行，沒有資料時每 250 ms 一行心跳 */
+/** ESP32 送來的一行遙測：每一筆雷達資料框一行（約 10 Hz），沒有資料時每 250 ms 一行心跳 */
 export interface Telemetry {
   radarOnline: boolean; // R
-  receiveOnly: boolean; // RO：測速雷達只接了 TX，偵測設定寫不進雷達
   state: SpeedState; // ST
   speedMps: number | null; // V：對地速度，未知時 null
   sigmaMps: number; // SD：1σ 不確定度
   qualityPct: number; // Q：最近 20 筆可用量測的比例
   wrongDirPct: number; // WD：最近 20 筆方向相反的比例（DIR 可能設反）
   frame: number; // FN：資料框序號，心跳時不變
-  targets: number; // N：這個資料框的目標數
-  angleDeg: number | null; // A：代表目標的水平角
-  rangeM: number | null; // RD：代表目標的距離（LD2451 是整數公尺）
-  radialMps: number | null; // RV：代表目標的徑向速度（正 = 遠離雷達）
-  snr: number | null; // S：代表目標的訊噪比
-  groundMps: number | null; // G：這個資料框換算的對地速度（濾波前）
+  targets: number; // N
+  rangeM: number | null; // RD：原始距離
+  radialMps: number | null; // RV：原始徑向速度（雷達自己的正負號）
+  energy: number; // E
+  groundMps: number | null; // G：這一筆換算的對地速度（濾波前）
   verdict: FrameVerdict; // FV
   radarDistanceM: number; // DR：雷達里程（開機起）
   wheelMps: number | null; // W：輪速感測器（參考值），沒接時 null
@@ -80,8 +87,9 @@ export interface DeviceConfig {
   direction: 1 | -1; // DIR：1 朝後、-1 朝前
   model: SpeedModel; // MODEL
   calibration: number; // CAL
-  radarSnr: number; // GSNR：測速雷達的訊噪比門檻
+  radarThreshold: number; // RTHR
   wheelMm: number; // WHEEL
+  radialLimitMps: number; // VMAX：C4001 徑向測速上限
   gateMinM: number; // RMIN：地面距離窗口（唯讀）
   gateMaxM: number; // RMAX
   /** 後方來車參數；韌體 3.0 沒有後方雷達功能時 null */
@@ -110,8 +118,9 @@ export type DeviceCommand =
   | { type: 'direction'; dir: 1 | -1 }
   | { type: 'model'; model: SpeedModel }
   | { type: 'calibration'; factor: number }
-  | { type: 'radarSnr'; value: number }
+  | { type: 'radarThreshold'; value: number }
   | { type: 'wheel'; mm: number }
+  | { type: 'radialLimit'; mps: number }
   | { type: 'rearRange'; m: number }
   | { type: 'rearMinSpeed'; kmh: number }
   | { type: 'rearTtc'; s: number }

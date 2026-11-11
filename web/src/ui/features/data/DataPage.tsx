@@ -1,5 +1,5 @@
 /**
- * 【數據】診斷與記錄：即時資料框（測速、後方兩顆 LD2451）、距離 × 徑向速度散佈圖、判斷統計、CSV 記錄、指令主控台。
+ * 【數據】診斷與記錄：即時資料框（C4001、後方 LD2451）、距離 × 徑向速度散佈圖、判斷統計、CSV 記錄、指令主控台。
  * 手機用上方的分段切換（一次看一塊，主控台不用捲到最下面）；電腦兩欄全部攤開。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -23,18 +23,16 @@ function FrameCard() {
   const odo = formatDistance(t?.radarDistanceM ?? null);
   const wheelOdo = formatDistance(t?.wheelDistanceM ?? null);
   return (
-    <Section title="測速雷達" description="LD2451 斜照路面：有目標時連續輸出，沒有目標時約每 1.4 秒一個空資料框">
+    <Section title="即時資料框" description="C4001 每 0.1 秒一筆；最新一筆與估計器狀態">
       <Card className="overflow-hidden">
         <KeyValue
           dense
           rows={[
-            { label: '狀態', value: <span className="font-sans">{!t ? DASH : !t.radarOnline ? '離線' : t.receiveOnly ? '在線（只接收）' : '在線'}</span> },
             { label: '資料框', value: t ? `#${t.frame}` : DASH, hint: s.rate === null ? undefined : `${s.rate.toFixed(1)} Hz` },
-            { label: '目標數 N', value: t ? t.targets : DASH, hint: '最多 5 個' },
-            { label: '代表目標 角度 A', value: t?.angleDeg == null ? DASH : `${t.angleDeg}°`, hint: '取中位數的那個' },
-            { label: '距離 RD', value: t?.rangeM ?? DASH, unit: t?.rangeM == null ? undefined : 'm' },
-            { label: '徑向速度 RV', value: t?.radialMps?.toFixed(2) ?? DASH, unit: t?.radialMps == null ? undefined : 'm/s', hint: '正 = 遠離' },
-            { label: '訊噪比 S', value: t?.snr ?? DASH },
+            { label: '目標數 N', value: t ? t.targets : DASH },
+            { label: '距離 RD', value: t?.rangeM?.toFixed(2) ?? DASH, unit: t?.rangeM == null ? undefined : 'm' },
+            { label: '徑向速度 RV', value: t?.radialMps?.toFixed(2) ?? DASH, unit: t?.radialMps == null ? undefined : 'm/s' },
+            { label: '能量 E', value: t ? t.energy.toLocaleString('en-US') : DASH },
             { label: '換算對地速度 G', value: formatSpeed(t?.groundMps ?? null, unit), unit: t?.groundMps == null ? undefined : speedUnitLabel(unit), hint: '濾波前' },
             { label: '判斷 FV', value: t ? <span className="font-sans">{VERDICT_LABEL[t.verdict]}</span> : DASH },
             { label: '可用比例 Q', value: t ? `${t.qualityPct}%` : DASH, hint: '最近 20 筆' },
@@ -132,7 +130,7 @@ function VerdictCard() {
                   <div
                     className={cx(
                       'h-full rounded-full',
-                      r.verdict === 'accepted' ? 'bg-tint' : r.verdict === 'noTarget' ? 'bg-line-strong' : 'bg-warn',
+                      r.verdict === 'accepted' || r.verdict === 'unfolded' ? 'bg-tint' : r.verdict === 'noTarget' || r.verdict === 'repeated' ? 'bg-line-strong' : 'bg-warn',
                     )}
                     style={{ width: `${r.pct}%` }}
                   />

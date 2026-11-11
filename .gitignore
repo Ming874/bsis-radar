@@ -3,6 +3,7 @@ firmware/.build/
 firmware/.devicetest/
 firmware/tests/*.exe
 firmware/tools/
+firmware/diagnostics/.bridge_build/
 firmware/diagnostics/.probe_build/
 firmware/diagnostics/*.txt
 

@@ -2,7 +2,7 @@
   "id": "/",
   "name": "BSIS 對地測速",
   "short_name": "BSIS 測速",
-  "description": "毫米波雷達對地測速：以藍牙連線 ESP32 與兩顆 LD2451 雷達，顯示自行車的對地速度、後方來車與行程",
+  "description": "毫米波雷達對地測速：以藍牙連線 ESP32 與 C4001 雷達，顯示自行車的對地速度、行程與校正",
   "lang": "zh-Hant-TW",
   "dir": "ltr",
   "start_url": "/#/speed",

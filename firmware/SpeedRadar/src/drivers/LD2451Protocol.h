@@ -15,7 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "../core/RadarFrame.h"
+#include "../core/RearFrame.h"
 
 namespace ld2451 {
 constexpr uint8_t kCmdEnableConfig   = 0xFF;  // 參數 01 00；回覆含協定版本、緩衝區大小
@@ -26,10 +26,7 @@ constexpr uint8_t kCmdGetTarget      = 0x12;
 constexpr uint8_t kCmdSetSensitivity = 0x03;  // 參數：累計觸發次數、訊噪比門檻、0、0
 constexpr uint8_t kCmdGetSensitivity = 0x13;
 
-// 目標參數的「方向」：只回報遠離／只回報靠近／都回報
-constexpr uint8_t kDirectionAway     = 0;
-constexpr uint8_t kDirectionApproach = 1;
-constexpr uint8_t kDirectionBoth     = 2;
+constexpr uint8_t kDirectionApproach = 1;     // 目標參數的「方向」：只回報靠近的目標
 constexpr size_t  kMaxPayload        = 32;    // 最長：韌體版本回覆 12 bytes、5 個目標的資料框 27 bytes
 constexpr size_t  kMaxCommandFrame   = 4 + 2 + 2 + 4 + 4;
 
@@ -68,7 +65,7 @@ class LD2451FrameParser {
 };
 
 // 解出資料框內容；格式不對（多半是位元錯誤）回傳 false
-bool decodeLD2451Report(const uint8_t* payload, uint16_t len, RadarFrame& out);
+bool decodeLD2451Report(const uint8_t* payload, uint16_t len, RearFrame& out);
 
 // 解出指令回覆；格式不對回傳 false
 bool decodeLD2451Ack(const uint8_t* payload, uint16_t len, LD2451Ack& out);

@@ -16,9 +16,9 @@ const Keyword kKeywords[] = {
     {"GET", CommandType::Get},          {"HELP", CommandType::Help},
     {"ANGLE", CommandType::Angle},      {"HEIGHT", CommandType::Height},
     {"DIR", CommandType::Direction},    {"MODEL", CommandType::Model},
-    {"CAL", CommandType::Calibration},  {"GSNR", CommandType::RadarSnr},
+    {"CAL", CommandType::Calibration},  {"RTHR", CommandType::RadarThreshold},
     {"WHEEL", CommandType::Wheel},      {"DEFAULTS", CommandType::Defaults},
-    {"REBOOT", CommandType::Reboot},
+    {"REBOOT", CommandType::Reboot},    {"VMAX", CommandType::RadialLimit},
     {"RANGE", CommandType::RearRange},  {"RSPD", CommandType::RearMinSpeed},
     {"TTC", CommandType::RearTtc},      {"RSNR", CommandType::RearSnr},
 };
@@ -93,8 +93,9 @@ bool isConfigCommand(CommandType type) {
     case CommandType::Direction:
     case CommandType::Model:
     case CommandType::Calibration:
-    case CommandType::RadarSnr:
+    case CommandType::RadarThreshold:
     case CommandType::Wheel:
+    case CommandType::RadialLimit:
     case CommandType::RearRange:
     case CommandType::RearMinSpeed:
     case CommandType::RearTtc:
@@ -107,8 +108,8 @@ bool isConfigCommand(CommandType type) {
 }
 
 const char* const kHelpText =
-    "OK commands: GET, ANGLE <deg>, HEIGHT <m>, DIR 1|-1, MODEL 0|1, CAL <factor>, GSNR <3-8>, WHEEL <mm>, "
-    "RANGE <m>, RSPD <km/h>, TTC <s>, RSNR <3-8>, DEFAULTS, REBOOT\n";
+    "OK commands: GET, ANGLE <deg>, HEIGHT <m>, DIR 1|-1, MODEL 0|1, CAL <factor>, RTHR <1-50>, WHEEL <mm>, "
+    "VMAX <m/s>, RANGE <m>, RSPD <km/h>, TTC <s>, RSNR <3-8>, DEFAULTS, REBOOT\n";
 
 bool applyCommand(const Command& cmd, SpeedConfig& cfg, const char** error) {
   const char* err = nullptr;
@@ -125,7 +126,7 @@ bool applyCommand(const Command& cmd, SpeedConfig& cfg, const char** error) {
     switch (cmd.type) {
       case CommandType::Angle:
         if (inRange(v, limits::kAngleLoDeg, limits::kAngleHiDeg)) next.angleDeg = static_cast<float>(v);
-        else err = "ANGLE must be 10-75 (deg)";
+        else err = "ANGLE must be 15-75 (deg)";
         break;
       case CommandType::Height:
         if (inRange(v, limits::kHeightLoM, limits::kHeightHiM)) next.heightM = static_cast<float>(v);
@@ -143,13 +144,17 @@ bool applyCommand(const Command& cmd, SpeedConfig& cfg, const char** error) {
         if (inRange(v, limits::kCalLo, limits::kCalHi)) next.calibration = static_cast<float>(v);
         else err = "CAL must be 0.5-2.0";
         break;
-      case CommandType::RadarSnr:
-        if (inRange(v, limits::kSnrLo, limits::kSnrHi) && isWhole(v)) next.radarSnr = static_cast<uint8_t>(v);
-        else err = "GSNR must be an integer 3-8";
+      case CommandType::RadarThreshold:
+        if (inRange(v, limits::kRadarThrLo, limits::kRadarThrHi) && isWhole(v)) next.radarThreshold = static_cast<uint8_t>(v);
+        else err = "RTHR must be an integer 1-50";
         break;
       case CommandType::Wheel:
         if (inRange(v, limits::kWheelMmLo, limits::kWheelMmHi) && isWhole(v)) next.wheelMm = static_cast<uint16_t>(v);
         else err = "WHEEL must be an integer 1000-3000 (mm)";
+        break;
+      case CommandType::RadialLimit:
+        if (inRange(v, limits::kVmaxLo, limits::kVmaxHi)) next.radialLimitMps = static_cast<float>(v);
+        else err = "VMAX must be 2-20 (m/s)";
         break;
       case CommandType::RearRange:
         if (inRange(v, limits::kRangeLoM, limits::kRangeHiM) && isWhole(v)) next.rear.rangeM = static_cast<uint8_t>(v);

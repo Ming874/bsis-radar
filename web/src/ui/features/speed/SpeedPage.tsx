@@ -9,6 +9,7 @@ import { actions, settingsStore, useOverspeed, useRadar, useSettings, useTrip } 
 import { SPEED_WINDOW_MS } from '../../../application/radarStore';
 import { STEADY_ACCEL, describeState, recentAccel } from '../../../application/selectors';
 import { SPEED_LIMIT_KMH } from '../../../domain/overspeed';
+import { unambiguousGroundMps } from '../../../domain/protocol';
 import { averageMps } from '../../../domain/trip';
 import { DASH, formatDistance, formatDuration, formatDurationWords, formatHm, formatLimit, formatPercent, formatSpeed, kmhToMps, speedUnitLabel } from '../../../domain/units';
 import { DESKTOP, useMediaQuery } from '../../hooks/useMediaQuery';
@@ -228,16 +229,15 @@ function MeasurementCard() {
       frameRate: r.frameRateHz,
       distance: r.telemetry?.radarDistanceM ?? null,
       model: r.config?.model ?? null,
+      cal: r.config?.calibration ?? null,
       angle: r.config?.angleDeg ?? null,
       height: r.config?.heightM ?? null,
       firmware: r.config?.firmware ?? null,
-      gateMin: r.config?.gateMinM ?? null,
-      gateMax: r.config?.gateMaxM ?? null,
+      vmax: r.config?.radialLimitMps ?? null,
     })),
   );
   const odo = formatDistance(s.distance);
-  // LD2451 的距離是整數公尺：韌體把窗口兩端往外取整
-  const gate = s.gateMin !== null && s.gateMax !== null ? `${Math.floor(s.gateMin)}～${Math.ceil(s.gateMax)}` : null;
+  const unfoldKmh = s.vmax !== null && s.angle !== null && s.cal !== null ? unambiguousGroundMps(s.vmax, s.angle, s.cal) * 3.6 : null;
   return (
     <Card className="hidden overflow-hidden lg:block">
       <h2 className="px-4 pt-4 pb-2 text-headline font-semibold text-ink">量測設定</h2>
@@ -246,7 +246,7 @@ function MeasurementCard() {
         rows={[
           { label: '速度模型', value: s.model === null ? DASH : <span className="font-sans">{s.model === 'fixedAngle' ? '固定角度' : '距離幾何'}</span> },
           { label: '安裝角度 / 高度', value: s.angle === null || s.height === null ? DASH : `${s.angle.toFixed(1)}° / ${s.height.toFixed(2)} m` },
-          { label: '地面距離窗口', hint: '由俯角與高度換算', value: gate ?? DASH, unit: gate === null ? undefined : 'm' },
+          { label: '不折疊的最高速度', hint: '由 VMAX 與俯角換算', value: unfoldKmh === null ? DASH : unfoldKmh.toFixed(1), unit: unfoldKmh === null ? undefined : 'km/h' },
           { label: '雷達資料框', value: s.frameRate === null ? DASH : s.frameRate.toFixed(1), unit: s.frameRate === null ? undefined : 'Hz' },
           { label: '雷達里程（開機起）', value: odo.value, unit: s.distance === null ? undefined : odo.unit },
           { label: '韌體', value: s.firmware ? `v${s.firmware}` : DASH },
@@ -268,7 +268,7 @@ export function SpeedPage() {
   const desktop = useMediaQuery(DESKTOP);
   return (
     <>
-      <PageHeader title="速度" description="一顆 LD2451 斜照路面量對地速度，一顆朝後偵測來車" />
+      <PageHeader title="速度" description="C4001 斜照路面量對地速度、LD2451 朝後偵測來車" />
       <DeviceNotices />
       {!connected && (
         <div className="mb-4">

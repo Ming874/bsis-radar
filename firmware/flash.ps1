@@ -45,7 +45,7 @@ function Fail([string]$text, [string[]]$tips = @()) {
 }
 
 Write-Host '==============================================' -ForegroundColor DarkCyan
-Write-Host '  BSIS 對地測速雷達 韌體燒錄工具（ESP32 + 兩顆 HLK-LD2451）' -ForegroundColor White
+Write-Host '  BSIS 對地測速雷達 韌體燒錄工具（ESP32 + C4001 + HLK-LD2451）' -ForegroundColor White
 Write-Host '==============================================' -ForegroundColor DarkCyan
 
 # ---------------------------------------------------------------- 1. 韌體檔
@@ -197,7 +197,7 @@ if (-not $NoVerify) {
       if (-not $askedConfig -and ((Get-Date) - $start).TotalSeconds -gt 2) { $serial.Write("GET`n"); $askedConfig = $true }
       try {
         $line = $serial.ReadLine().TrimEnd()
-        if ($line -match '^=== BSIS|^\[藍牙\]|^\[(測速|後方)?雷達\]|^CFG |^\[設定\]') {
+        if ($line -match '^=== BSIS|^\[藍牙\]|^\[(後方)?雷達\]|^CFG |^\[設定\]') {
           Write-Host "      $line"
           if ($line -match 'CFG ') { $seenConfig = $true }
         }

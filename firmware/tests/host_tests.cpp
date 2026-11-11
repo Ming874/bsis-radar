@@ -1,8 +1,7 @@
-// 電腦端單元測試：驗證不依賴硬體的模組（資料框解析、對地速度估計、指令、輸出格式、輪速、後方來車）
+// 電腦端單元測試：驗證不依賴硬體的模組（資料框解析、對地速度估計、指令、輸出格式、輪速）
 // 執行：firmware/arduino.ps1 test 或 firmware/tests/run_tests.sh（需要 g++）
 #include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include <initializer_list>
@@ -13,6 +12,7 @@
 #include "core/RearThreat.h"
 #include "core/SpeedConfig.h"
 #include "core/WheelSpeed.h"
+#include "drivers/C4001Protocol.h"
 #include "drivers/LD2451Protocol.h"
 
 static int gChecks   = 0;
@@ -31,9 +31,8 @@ static int gFailures = 0;
 
 static const double kPi = 3.14159265358979;
 static double rad(double deg) { return deg * kPi / 180.0; }
-static double deg(double r) { return r * 180.0 / kPi; }
 
-// ------------------------------------------------------------ 工具：亂數
+// ------------------------------------------------------------ 工具：亂數與 C4001 地面回波模擬
 struct Rng {
   uint32_t s;
   explicit Rng(uint32_t seed) : s(seed ? seed : 1) {}
@@ -49,96 +48,88 @@ struct Rng {
   }
 };
 
-// ------------------------------------------------------------ 工具：LD2451 的目標與資料框
-static RadarTarget makeTarget(int distanceM, int speedKmh, bool approaching, int angle = 0, int snr = 30) {
-  RadarTarget t;
-  t.angleDeg  = static_cast<int8_t>(angle);
-  t.distanceM = static_cast<uint8_t>(distanceM < 0 ? 0 : (distanceM > 255 ? 255 : distanceM));
-  t.speedKmh  = static_cast<uint8_t>(speedKmh < 0 ? 0 : (speedKmh > 255 ? 255 : speedKmh));
-  t.direction = approaching ? kApproachByte : 0;
-  t.snr       = static_cast<uint8_t>(snr < 0 ? 0 : (snr > 255 ? 255 : snr));
-  return t;
+// C4001 超過上限時的行為沒有官方文件：可能折疊到另一側、也可能截斷在上限（docs/ALGORITHM.md §2）
+static float foldRadial(double vr, double limit) {
+  double x = fmod(vr + limit, 2 * limit);
+  if (x < 0) x += 2 * limit;
+  return static_cast<float>(x - limit);
 }
 
-static RadarFrame frameOf(std::initializer_list<RadarTarget> targets) {
-  RadarFrame f;
-  for (const RadarTarget& t : targets) {
-    if (f.count < kRadarMaxTargets) f.targets[f.count++] = t;
-  }
-  return f;
-}
-
-static RadarFrame none() { return RadarFrame(); }
-
-// 路面上的一個點：距離 r（m）、有號徑向速度 vr（m/s，正 = 遠離雷達）。
-// LD2451 回報整數公尺、整數 km/h（文件沒寫是四捨五入還是捨去，這裡用四捨五入）
-static RadarTarget groundTarget(double rangeM, double radialMps, int angle = 0, int snr = 30) {
-  return makeTarget(static_cast<int>(lround(rangeM)), static_cast<int>(lround(fabs(radialMps) * 3.6)), radialMps < 0, angle,
-                    snr);
-}
-
-// 理想量測：視軸正中央的路面點（距離 h / sin θ、徑向速度 v cos θ）
-static RadarFrame ideal(const SpeedConfig& c, double v) {
-  const double a = rad(c.angleDeg);
-  return frameOf({groundTarget(c.heightM / sin(a), c.direction * v * cos(a))});
-}
-
-// 估計器對 ideal(c, v) 應該算出的對地速度：雷達的速度只有整數 km/h
-static double quantized(const SpeedConfig& c, double v) {
-  const double a = rad(c.angleDeg);
-  return c.calibration * static_cast<double>(lround(v * cos(a) * 3.6)) / 3.6 / cos(a);
-}
-
-// 模擬斜照路面的 LD2451：每個資料框回報波束內 1～maxPoints 個路面散射點（整數公尺、整數 km/h、整數度）。
-// 散射點的俯角 α = 視軸 + 加權偏移（路面越光滑、越偏向正下方）+ 隨機分散，水平角 φ = 隨機分散；
-// 距離 r = h / (cos φ · sin α)；徑向速度 vr = v · cos φ · cos α + 上下震動 + 雷達雜訊。
-// 低於 1 km/h 的點雷達不回報（寫進雷達的最低速度）
+// 模擬朝地面的 C4001：每一筆資料框回報波束內「最強」的一個路面散射點。
+// 散射點的俯角 α = 視軸 + 加權偏移（路面越光滑、越偏向正下方）+ 隨機分散；
+// 距離 r = h / sin α（加雜訊與偏差）；徑向速度 vr = v cos α + 上下震動 + 雷達雜訊。
 struct GroundRadarSim {
   double heightM        = 0.70;
-  double angleDeg       = 30.0;  // 實際安裝角度
+  double angleDeg       = 45.0;  // 實際安裝角度
   double shiftDeg       = 0.0;   // 功率加權造成的偏移（正 = 偏向正下方，都卜勒變小）
   double spreadDeg      = 0.0;   // 散射點俯角的標準差
-  double azSpreadDeg    = 0.0;   // 散射點水平角的標準差
+  double rangeNoiseM    = 0.0;
   double rangeBiasM     = 0.0;
   double radialNoiseMps = 0.0;
   double bounceMps      = 0.0;   // 雷達上下震動的速度標準差
-  double pDetect        = 1.0;   // 每個資料框有路面回波的機率
-  int    maxPoints      = 1;     // 每個資料框最多幾個路面點
-  double pOutlier       = 0.0;   // 每個資料框多一個雜散目標（車、行人、車輪）的機率
-  int    radarSign      = 1;     // 朝後安裝：地面遠離
+  double pDetect        = 1.0;   // 每一筆有路面回波的機率
+  double pOutlier       = 0.0;   // 雜散目標（車輪、腳、路人）
+  bool   extrapolate    = true;  // 失去目標時多送一筆外插資料框（C4001 實測行為）
+  int    radarSign      = 1;     // 朝後安裝：地面遠離 → C4001 回報正值
+  double foldLimit      = 0;     // > 0：雷達的徑向上限，超過時折疊（FFT 混疊）
 
-  RadarFrame frame(double v, Rng& rng) {
-    RadarFrame f;
+  bool             hadTarget = false;
+  RadarMeasurement last;
+
+  RadarMeasurement frame(double v, Rng& rng) {
+    RadarMeasurement m;
     if (v > 0.05 && rng.uniform() < pDetect) {
-      int points = 1 + static_cast<int>(rng.uniform() * maxPoints);
-      if (points > maxPoints) points = maxPoints;
-      for (int i = 0; i < points && f.count < kRadarMaxTargets; i++) {
-        double a = angleDeg + shiftDeg + spreadDeg * rng.gauss();
-        double az = azSpreadDeg * rng.gauss();
-        if (a < 3) a = 3;
-        if (a > 88) a = 88;
-        if (az > 25) az = 25;
-        if (az < -25) az = -25;
-        const double r  = heightM / (cos(rad(az)) * sin(rad(a))) + rangeBiasM;
-        const double vr = v * cos(rad(az)) * cos(rad(a)) + bounceMps * sin(rad(a)) * rng.gauss() +
-                          radialNoiseMps * rng.gauss();
-        const RadarTarget t = groundTarget(r, radarSign * vr, static_cast<int>(lround(az)),
-                                           10 + static_cast<int>(rng.uniform() * 40));
-        if (t.speedKmh == 0) continue;
-        f.targets[f.count++] = t;
-      }
+      double a = angleDeg + shiftDeg + spreadDeg * rng.gauss();
+      if (a < 5) a = 5;
+      if (a > 88) a = 88;
+      const double r  = heightM / sin(rad(a)) + rangeBiasM + rangeNoiseM * rng.gauss();
+      const double vr = v * cos(rad(a)) + bounceMps * sin(rad(a)) * rng.gauss() + radialNoiseMps * rng.gauss();
+      m.targets  = 1;
+      m.rangeM   = static_cast<float>(r);
+      m.speedMps = foldLimit > 0 ? foldRadial(radarSign * vr, foldLimit) : static_cast<float>(radarSign * vr);
+      m.energy   = 20000 + static_cast<uint32_t>(rng.uniform() * 500000);
+    } else if (rng.uniform() < pOutlier) {
+      m.targets  = 1;
+      m.rangeM   = static_cast<float>(0.8 + rng.uniform() * 1.0);
+      m.speedMps = static_cast<float>(-3.0 + rng.uniform() * 12.0);
+      m.energy   = 5000 + static_cast<uint32_t>(rng.uniform() * 100000);
+    } else if (hadTarget && extrapolate) {
+      m = last;  // 外插：速度、能量不變，距離往前推
+      m.rangeM += m.speedMps * 0.1f;
+      hadTarget = false;
+      return m;
     }
-    if (f.count < kRadarMaxTargets && rng.uniform() < pOutlier) {
-      const int kmh = static_cast<int>(lround(-10 + rng.uniform() * 40));  // −10～30 km/h（負 = 靠近）
-      if (kmh != 0) {
-        f.targets[f.count++] = makeTarget(static_cast<int>(rng.uniform() * 9), abs(kmh), kmh < 0,
-                                          static_cast<int>(lround(-20 + rng.uniform() * 40)),
-                                          10 + static_cast<int>(rng.uniform() * 40));
-      }
-    }
-    return f;
+    hadTarget = m.targets > 0;
+    if (hadTarget) last = m;
+    return m;
   }
 };
+
+// 不會折疊的雷達（測速上限 10 m/s）：一般情境用；C4001 的上限與折疊另外在 testRadialLimit 測
+static SpeedConfig noFold() {
+  SpeedConfig c    = SpeedConfig::defaults();
+  c.radialLimitMps = 10.0f;
+  return c;
+}
+
+static RadarMeasurement target(float range, float speed, uint32_t energy) {
+  RadarMeasurement m;
+  m.targets  = 1;
+  m.rangeM   = range;
+  m.speedMps = speed;
+  m.energy   = energy;
+  return m;
+}
+
+static RadarMeasurement none() { return RadarMeasurement(); }
+
+// 理想量測：視軸正中央的散射點（距離 h / sin θ、徑向速度 v cos θ），能量每筆不同（避免被當成外插）
+static RadarMeasurement ideal(const SpeedConfig& c, double v) {
+  static uint32_t e = 30000;
+  e += 7;
+  const double a = rad(c.angleDeg);
+  return target(static_cast<float>(c.heightM / sin(a)), static_cast<float>(c.direction * v * cos(a)), e);
+}
 
 struct RunStats {
   double rmsErr      = 0;  // 對地速度誤差 RMS（m/s），只算「追蹤中」且已過暫態的時間
@@ -211,71 +202,101 @@ static RunStats runProfile(GroundRadarSim& sim, const SpeedConfig& cfg, Profile 
   return st;
 }
 
+// ------------------------------------------------------------ 資料框解析
+static C4001FrameType feedAll(C4001FrameParser& p, const char* s, RadarMeasurement& out, int* frames = nullptr) {
+  C4001FrameType last = C4001FrameType::None;
+  for (const char* c = s; *c; c++) {
+    const C4001FrameType t = p.feed(*c, out);
+    if (t != C4001FrameType::None) {
+      last = t;
+      if (frames) (*frames)++;
+    }
+  }
+  return last;
+}
+
+static void testFrameParser() {
+  printf("[C4001FrameParser]\n");
+  C4001FrameParser p;
+  RadarMeasurement m;
+
+  CHECK(feedAll(p, "$DFDMD,1,0,0.86,3.84,52000,0,0*\r\n", m) == C4001FrameType::Speed);
+  CHECK(m.targets == 1);
+  CHECK_NEAR(m.rangeM, 0.86, 1e-4);
+  CHECK_NEAR(m.speedMps, 3.84, 1e-4);
+  CHECK(m.energy == 52000);
+
+  // 半截資料框後面接新的資料框：舊的算壞資料，新的要能正常解析
+  int frames = 0;
+  CHECK(feedAll(p, "$DFDMD,1,0,3.2", m, &frames) == C4001FrameType::None);
+  CHECK(feedAll(p, "$DFDMD,1,0,4.00,0.50,900,0,0*", m, &frames) == C4001FrameType::Speed);
+  CHECK(frames == 2);  // 一個 Invalid + 一個 Speed
+  CHECK_NEAR(m.rangeM, 4.0, 1e-4);
+
+  // 指令回覆夾在中間，不影響
+  CHECK(feedAll(p, "sensorStart\r\nDone\r\n$DFDMD,0,0,0.00,0.00,0,0,0*", m) == C4001FrameType::Speed);
+  CHECK(m.targets == 0);
+
+  CHECK(feedAll(p, "$DFHPD,1,0,0*", m) == C4001FrameType::Presence);
+  CHECK(feedAll(p, "$DFDMD,1,0,abc,0.5,10,0,0*", m) == C4001FrameType::Invalid);
+  CHECK(feedAll(p, "$DFDMD,1,0*", m) == C4001FrameType::Invalid);              // 欄位不足
+  CHECK(feedAll(p, "$DFDMD,1,0,8.5x,1,1,0,0*", m) == C4001FrameType::Invalid);  // 數字後有雜字
+  CHECK(feedAll(p, "$DFDMD,1,0,500,1,1,0,0*", m) == C4001FrameType::Invalid);   // 距離不合理
+  CHECK(feedAll(p, "$DFDMD,0,0,,,,*", m) == C4001FrameType::Speed);             // 沒目標時欄位可空
+  CHECK(feedAll(p, "$DFDMD,0, , , , , , *", m) == C4001FrameType::Speed);       // 實測：沒目標時是空白欄位
+  CHECK(m.targets == 0);
+  CHECK(feedAll(p, "$DFDMD,1,0, 8.00,-3.00,50000,0,0*", m) == C4001FrameType::Speed);  // 數字前有空白
+  CHECK_NEAR(m.rangeM, 8.0, 1e-4);
+  CHECK(feedAll(p, "hello world\r\n", m) == C4001FrameType::None);
+
+  // 超長資料：丟掉，之後的資料框照常解析
+  char longFrame[200] = "$DFDMD,1,0,";
+  for (int i = 0; i < 150; i++) strcat(longFrame, "9");
+  CHECK(feedAll(p, longFrame, m) == C4001FrameType::Invalid);
+  CHECK(feedAll(p, "$DFDMD,1,0,2.00,-1.00,100,0,0*", m) == C4001FrameType::Speed);
+  CHECK_NEAR(m.rangeM, 2.0, 1e-4);
+}
+
 // ------------------------------------------------------------ 幾何：距離窗口與換算倍率
 static void testGeometry() {
   printf("[GroundGeometry]\n");
   SpeedConfig c = SpeedConfig::defaults();
   CHECK(c.isValid());
-  CHECK_NEAR(c.angleDeg, 30.0, 1e-6);
+  CHECK_NEAR(c.angleDeg, 45.0, 1e-6);
   CHECK(c.model == SpeedModel::FixedAngle);
-  CHECK(c.radarSnr == 4);
 
-  // 預設 30°、0.70 m：視軸打在 1.4 m；窗口 5°～60° → 0.71～8.13 m（各留 0.10 m）→ LD2451 的整數距離 0～9 m
+  // 預設 45°、0.70 m：視軸打在 0.99 m；窗口 20°～75° → 0.725～2.047 m，再各留 0.10 m
   const GroundWindow w = groundWindow(c);
-  CHECK_NEAR(w.minRangeM, 0.70 / sin(rad(60)) - 0.10, 0.005);
-  CHECK_NEAR(w.maxRangeM, 0.70 / sin(rad(5)) + 0.10, 0.01);
-  CHECK(w.minDistanceM == 0 && w.maxDistanceM == 9);
+  CHECK_NEAR(w.minRangeM, 0.70 / sin(rad(75)) - 0.10, 0.005);
+  CHECK_NEAR(w.maxRangeM, 0.70 / sin(rad(20)) + 0.10, 0.005);
+  CHECK(w.radarMinM == w.minRangeM);
+  CHECK(w.radarMaxM >= ground_tuning::kRadarMinMaxRangeM);  // C4001 的最遠距離有下限
+  CHECK(w.radarMaxM >= w.maxRangeM);
 
-  // 3.x（C4001）時期的 45°：20°～75° → 0.62～2.15 m → 0～3 m
-  SpeedConfig steep = c;
-  steep.angleDeg = 45.0f;
-  const GroundWindow ws = groundWindow(steep);
-  CHECK_NEAR(ws.minRangeM, 0.70 / sin(rad(75)) - 0.10, 0.005);
-  CHECK_NEAR(ws.maxRangeM, 0.70 / sin(rad(20)) + 0.10, 0.005);
-  CHECK(ws.minDistanceM == 0 && ws.maxDistanceM == 3);
+  // 很低的安裝：最近距離不小於 C4001 的 0.3 m
+  SpeedConfig low = c;
+  low.heightM = 0.15f;
+  low.angleDeg = 30.0f;
+  CHECK(groundWindow(low).minRangeM >= ground_tuning::kRadarMinRangeM - 1e-6);
+  CHECK(groundWindow(low).maxRangeM > groundWindow(low).minRangeM);
 
-  // 很高、很淺：遠端是雷達的偵測距離 10 m；近端 40° → 2.23 m → 2 m
-  SpeedConfig high = c;
-  high.heightM  = 1.5f;
-  high.angleDeg = 10.0f;
-  const GroundWindow wh = groundWindow(high);
-  CHECK_NEAR(wh.maxRangeM, ground_tuning::kMaxRangeM, 1e-4);
-  CHECK(wh.maxDistanceM == 10);
-  CHECK_NEAR(wh.minRangeM, 1.5 / sin(rad(40)) - 0.10, 0.005);
-  CHECK(wh.minDistanceM == 2);
-
-  // 固定角度：倍率 = 1 / (cos θ · cos φ)，與距離無關
+  // 固定角度：倍率 = 1 / cos θ，與距離無關
   float f = 0, a = 0;
-  CHECK(groundFactor(c, 1.0f, 0.0f, &f, &a));
-  CHECK_NEAR(f, 1.0 / cos(rad(30)), 1e-4);
-  CHECK_NEAR(a, 30.0, 1e-4);
-  CHECK(groundFactor(c, 1.0f, -20.0f, &f, &a));
-  CHECK_NEAR(f, 1.0 / (cos(rad(30)) * cos(rad(20))), 1e-4);
-  CHECK(groundFactor(c, 1.0f, 30.0f, &f, &a));
-  CHECK(!groundFactor(c, 1.0f, 31.0f, &f, &a));   // 波束外：多半是位元錯誤或旁瓣
-  CHECK(!groundFactor(c, 1.0f, -45.0f, &f, &a));
+  CHECK(groundFactor(c, 0.5f, &f, &a));
+  CHECK_NEAR(f, 1.0 / cos(rad(45)), 1e-4);
+  CHECK_NEAR(a, 45.0, 1e-4);
 
-  // 距離幾何：cos φ · sin α = h / r
+  // 距離幾何：sin α = h / r
   SpeedConfig g = c;
   g.model = SpeedModel::RangeGeometry;
-  CHECK(groundFactor(g, static_cast<float>(0.70 / sin(rad(30))), 0.0f, &f, &a));
+  CHECK(groundFactor(g, static_cast<float>(0.70 / sin(rad(30))), &f, &a));
   CHECK_NEAR(a, 30.0, 0.01);
   CHECK_NEAR(f, 1.0 / cos(rad(30)), 1e-3);
-  CHECK(groundFactor(g, 2.0f, 0.0f, &f, &a));  // LD2451 的整數距離
-  CHECK_NEAR(a, deg(asin(0.35)), 0.01);
-  CHECK(groundFactor(g, 2.0f, 20.0f, &f, &a));
-  const double s20 = 0.70 / (2.0 * cos(rad(20)));
-  CHECK_NEAR(a, deg(asin(s20)), 0.01);
-  CHECK_NEAR(f, 1.0 / (cos(rad(20)) * sqrt(1 - s20 * s20)), 1e-3);
-  CHECK(!groundFactor(g, 0.69f, 0.0f, &f, &a));   // 比雷達高度還近：不是地面
-  CHECK(!groundFactor(g, 0.701f, 0.0f, &f, &a));  // 幾乎正下方：都卜勒趨近 0、倍率發散
-  CHECK(!groundFactor(g, 0.0f, 0.0f, &f, &a));    // LD2451 回報 0 m
-  CHECK(!groundFactor(g, 2.0f, 35.0f, &f, &a));
-
-  // 徑向速度的正負：遠離為正
-  CHECK_NEAR(radialMps(makeTarget(2, 18, false)), 5.0, 1e-5);
-  CHECK_NEAR(radialMps(makeTarget(2, 18, true)), -5.0, 1e-5);
-  CHECK(radialMps(makeTarget(2, 0, false)) == 0.0f);
+  CHECK(groundFactor(g, 0.70f / static_cast<float>(sin(rad(60))), &f, &a));
+  CHECK_NEAR(a, 60.0, 0.01);
+  CHECK(!groundFactor(g, 0.69f, &f, &a));   // 比雷達高度還近：不是地面
+  CHECK(!groundFactor(g, 0.701f, &f, &a));  // 幾乎正下方：都卜勒趨近 0、倍率發散
+  CHECK(!groundFactor(g, 0.0f, &f, &a));
 }
 
 // ------------------------------------------------------------ 估計器：基本行為
@@ -295,7 +316,7 @@ static void feedNone(GroundSpeedEstimator& est, const SpeedConfig& c, uint32_t& 
 
 static void testEstimatorBasics() {
   printf("[GroundSpeedEstimator：基本行為]\n");
-  const SpeedConfig c = SpeedConfig::defaults();
+  const SpeedConfig c = noFold();
   GroundSpeedEstimator est;
   uint32_t ms = 1000;
 
@@ -307,17 +328,13 @@ static void testEstimatorBasics() {
   CHECK(est.state() == SpeedState::Stopped);
   CHECK(est.hasSpeed() && est.speedMps() == 0.0f);
 
-  // 5 m/s、30°：徑向 15.6 km/h → 雷達回報 16 km/h → 5.13 m/s（整數 km/h 的量化，CAL 與濾波會處理）
-  const double v5 = quantized(c, 5.0);
-  CHECK(fabs(v5 - 5.0) < 0.15);
-
   // 擷取：前兩筆還在確認（速度仍是 0），第三筆一致才開始追蹤
   ms += 100;
   FrameResult r = est.onFrame(ideal(c, 5.0), ms, c);
   CHECK(r.verdict == FrameVerdict::Acquiring);
-  CHECK(r.hasGround && r.target == 0 && r.candidates == 1);
-  CHECK_NEAR(r.groundMps, v5, 1e-3);
-  CHECK_NEAR(r.depressionDeg, 30.0, 1e-3);
+  CHECK(r.hasGround);
+  CHECK_NEAR(r.groundMps, 5.0, 1e-3);
+  CHECK_NEAR(r.depressionDeg, 45.0, 1e-3);
   CHECK(est.state() == SpeedState::Acquiring);
   CHECK(est.speedMps() == 0.0f);
   feedFor(est, c, 5.0, ms, 1);
@@ -326,15 +343,14 @@ static void testEstimatorBasics() {
   r = est.onFrame(ideal(c, 5.0), ms, c);
   CHECK(r.verdict == FrameVerdict::Accepted);
   CHECK(est.state() == SpeedState::Tracking);
-  CHECK_NEAR(est.speedMps(), v5, 1e-3);
+  CHECK_NEAR(est.speedMps(), 5.0, 1e-3);
   CHECK(est.sigmaMps() > 0.0f);
 
-  // 等速 10 秒：速度不變、里程 ≈ 速度 × 時間（擷取的那段也補回）。
-  // LD2451 的速度是整數，連續好幾筆完全一樣是正常的（C4001 時期的「外插資料框」判斷不再適用）
+  // 等速 10 秒：速度不變、里程 ≈ 5 × 時間（擷取的那段也補回）
   const double before = est.distanceM();
   feedFor(est, c, 5.0, ms, 100);
-  CHECK_NEAR(est.speedMps(), v5, 1e-3);
-  CHECK_NEAR(est.distanceM() - before, v5 * 10.0, 0.05);
+  CHECK_NEAR(est.speedMps(), 5.0, 1e-3);
+  CHECK_NEAR(est.distanceM() - before, 50.0, 0.05);
   CHECK(est.qualityPct() == 100);
   CHECK(est.wrongDirectionPct() == 0);
   CHECK(est.frames() == 3 + 3 + 100);
@@ -345,114 +361,51 @@ static void testEstimatorBasics() {
   GroundSpeedEstimator e2;
   uint32_t ms2 = 1000;
   feedFor(e2, cal, 5.0, ms2, 50);
-  CHECK_NEAR(e2.speedMps(), quantized(cal, 5.0), 0.01);
-  CHECK_NEAR(quantized(cal, 5.0), 1.10 * v5, 1e-6);
+  CHECK_NEAR(e2.speedMps(), 5.5, 0.01);
 
-  // 朝前安裝（DIR = -1）：路面靠近雷達，同樣量得到
+  // 朝前安裝（DIR = -1）：C4001 回報負值，同樣量得到
   SpeedConfig fwd = c;
   fwd.direction = -1;
   GroundSpeedEstimator e3;
   uint32_t ms3 = 1000;
   feedFor(e3, fwd, 4.0, ms3, 20);
   CHECK(e3.state() == SpeedState::Tracking);
-  CHECK_NEAR(e3.speedMps(), quantized(fwd, 4.0), 0.01);
-}
-
-// ------------------------------------------------------------ 估計器：一個資料框多個目標
-static void testEstimatorTargets() {
-  printf("[GroundSpeedEstimator：一個資料框多個目標]\n");
-  const SpeedConfig c = SpeedConfig::defaults();
-  const double perKmh = 1.0 / 3.6 / cos(rad(30));  // 視軸上 1 km/h 徑向 = 多少 m/s 對地
-
-  // 三個路面點 ＋ 遠離中的車（快很多）＋ 路邊晃動的東西（很慢）：取中位數 → 中間那個路面點
-  GroundSpeedEstimator est;
-  uint32_t ms = 1000;
-  FrameResult r;
-  const RadarFrame mixed = frameOf({makeTarget(6, 45, false, 10, 50), makeTarget(1, 17, false, 0, 20),
-                                    makeTarget(2, 18, false, 0, 35), makeTarget(1, 3, false, 0, 15),
-                                    makeTarget(1, 19, false, 0, 25)});
-  for (int i = 0; i < 3; i++) {
-    ms += 100;
-    r = est.onFrame(mixed, ms, c);
-  }
-  CHECK(r.verdict == FrameVerdict::Accepted);
-  CHECK(r.target == 2 && r.candidates == 5);
-  CHECK_NEAR(r.groundMps, 18 * perKmh, 1e-3);
-  CHECK(est.state() == SpeedState::Tracking);
-  CHECK_NEAR(est.speedMps(), 18 * perKmh, 1e-3);
-
-  // 偶數個：中間兩個的平均；代表目標取訊噪比較高的那個
-  ms += 100;
-  r = est.onFrame(frameOf({makeTarget(1, 17, false, 0, 40), makeTarget(2, 19, false, 0, 20)}), ms, c);
-  CHECK(r.verdict == FrameVerdict::Accepted && r.candidates == 2);
-  CHECK_NEAR(r.groundMps, 18 * perKmh, 1e-3);
-  CHECK(r.target == 0);
-
-  // 水平角要換算：φ = 20° 的點，徑向速度只有視軸上的 cos 20°
-  ms += 100;
-  r = est.onFrame(frameOf({makeTarget(2, 17, false, 20)}), ms, c);
-  CHECK(r.verdict == FrameVerdict::Accepted);
-  CHECK_NEAR(r.groundMps, 17 * perKmh / cos(rad(20)), 1e-3);
-
-  // 路面 ＋ 從後面追上來的車：只用路面，不算「方向相反」
-  ms += 100;
-  r = est.onFrame(frameOf({makeTarget(5, 12, true, -4, 60), makeTarget(1, 18, false)}), ms, c);
-  CHECK(r.verdict == FrameVerdict::Accepted && r.target == 1 && r.candidates == 1);
-
-  // 只有追上來的車：方向相反（代表目標是那台車）
-  ms += 100;
-  r = est.onFrame(frameOf({makeTarget(5, 12, true, -4, 60)}), ms, c);
-  CHECK(r.verdict == FrameVerdict::WrongDirection && r.target == 0 && r.hasGround);
-
-  // 只有窗口外的目標：代表目標是訊噪比最高的
-  ms += 100;
-  r = est.onFrame(frameOf({makeTarget(15, 18, false, 0, 20), makeTarget(1, 18, false, 40, 30)}), ms, c);
-  CHECK(r.verdict == FrameVerdict::OutOfGate && r.target == 1 && !r.hasGround && r.candidates == 0);
-
-  // 目標數超過 5（位元錯誤時不該發生）：只看前 5 個，不會讀到陣列外
-  RadarFrame overflow = mixed;
-  overflow.count = 9;
-  ms += 100;
-  r = est.onFrame(overflow, ms, c);
-  CHECK(r.verdict == FrameVerdict::Accepted || r.verdict == FrameVerdict::Outlier);
-  CHECK(r.target >= 0 && r.target < static_cast<int8_t>(kRadarMaxTargets));
+  CHECK_NEAR(e3.speedMps(), 4.0, 0.01);
 }
 
 static void testEstimatorStopAndDropout() {
   printf("[GroundSpeedEstimator：停車、失去回波、恢復]\n");
-  const SpeedConfig c = SpeedConfig::defaults();
+  const SpeedConfig c = noFold();
 
-  // 慢速時失去回波 → 停車：0.4 秒後保持、0.6 秒判定靜止，保持期間的距離算一半
+  // 慢速時失去回波 → 停車：0.6 秒內判定靜止，保持期間的距離算一半
   {
     GroundSpeedEstimator est;
     uint32_t ms = 1000;
     feedFor(est, c, 1.0, ms, 20);
     CHECK(est.state() == SpeedState::Tracking);
-    const double v1 = quantized(c, 1.0);
     const double d0 = est.distanceM();
-    feedNone(est, c, ms, 4);
+    feedNone(est, c, ms, 3);
     CHECK(est.state() == SpeedState::Holding);
     CHECK(est.hasSpeed());
-    CHECK_NEAR(est.speedMps(), v1, 0.01);  // 保持：暫時沿用
-    feedNone(est, c, ms, 3);
+    CHECK_NEAR(est.speedMps(), 1.0, 0.01);  // 保持：暫時沿用
+    feedNone(est, c, ms, 4);
     CHECK(est.state() == SpeedState::Stopped);
     CHECK(est.speedMps() == 0.0f);
-    // 最後一筆之後 0.4 s 照算（≈ 0.4 m），保持期間 0.2 s 算一半（≈ 0.1 m）
-    CHECK(est.distanceM() - d0 > 0.3 && est.distanceM() - d0 < 0.75);
+    // 最後一筆之後 0.7 s：保持期間 ≈ 0.4 s × 1 m/s，算一半 ≈ 0.2 m（+ 最後一筆到保持前的 0.3 m）
+    CHECK(est.distanceM() - d0 > 0.25 && est.distanceM() - d0 < 0.75);
     feedNone(est, c, ms, 50);
     CHECK(est.state() == SpeedState::Stopped);  // 一直停著
   }
 
-  // 慢速時看到靜止回波（雷達回報 0 km/h，只接收模式下雷達用自己的設定時可能出現）→ 判定靜止
+  // 慢速時看到靜止回波（雷達回報速度 ≈ 0 的路面）→ 立刻判定靜止
   {
     GroundSpeedEstimator est;
     uint32_t ms = 1000;
     feedFor(est, c, 0.8, ms, 20);
-    CHECK(est.state() == SpeedState::Tracking);
     ms += 100;
-    CHECK(est.onFrame(frameOf({makeTarget(1, 0, false)}), ms, c).verdict == FrameVerdict::Static);
+    CHECK(est.onFrame(target(0.99f, 0.02f, 9001), ms, c).verdict == FrameVerdict::Static);
     ms += 100;
-    est.onFrame(frameOf({makeTarget(2, 0, true)}), ms, c);
+    est.onFrame(target(0.99f, 0.03f, 9002), ms, c);
     CHECK(est.state() == SpeedState::Stopped);
   }
 
@@ -463,11 +416,11 @@ static void testEstimatorStopAndDropout() {
     feedFor(est, c, 6.0, ms, 20);
     for (int i = 0; i < 2; i++) {
       ms += 100;
-      est.onFrame(frameOf({makeTarget(1, 0, false)}), ms, c);
+      est.onFrame(target(0.9f, 0.01f, 8000 + i), ms, c);
     }
     CHECK(est.state() == SpeedState::Tracking);
     feedFor(est, c, 6.0, ms, 1);
-    CHECK_NEAR(est.speedMps(), quantized(c, 6.0), 0.05);
+    CHECK_NEAR(est.speedMps(), 6.0, 0.05);
   }
 
   // 高速時短暫失去回波（1 秒）→ 保持，回來後繼續；保持期間的距離要算進去
@@ -475,14 +428,13 @@ static void testEstimatorStopAndDropout() {
     GroundSpeedEstimator est;
     uint32_t ms = 1000;
     feedFor(est, c, 6.0, ms, 20);
-    const double v6 = quantized(c, 6.0);
     const double d0 = est.distanceM();
     feedNone(est, c, ms, 10);
     CHECK(est.state() == SpeedState::Holding);
-    CHECK_NEAR(est.speedMps(), v6, 0.01);
+    CHECK_NEAR(est.speedMps(), 6.0, 0.01);
     feedFor(est, c, 6.0, ms, 10);
     CHECK(est.state() == SpeedState::Tracking);
-    CHECK_NEAR(est.distanceM() - d0, v6 * 2.0, 0.1);
+    CHECK_NEAR(est.distanceM() - d0, 6.0 * 2.0, 0.1);
   }
 
   // 失去回波超過 2 秒 → 訊號中斷（速度未知）；回波回來後重新擷取
@@ -498,7 +450,7 @@ static void testEstimatorStopAndDropout() {
     CHECK(est.state() == SpeedState::Acquiring);
     feedFor(est, c, 5.0, ms, 1);
     CHECK(est.state() == SpeedState::Tracking);
-    CHECK_NEAR(est.speedMps(), quantized(c, 5.0), 0.01);
+    CHECK_NEAR(est.speedMps(), 5.0, 0.01);
   }
 
   // 保持期間速度變了（例如急煞）：回來的量測連續 3 筆彼此一致 → 重新初始化，不會卡在舊速度
@@ -508,23 +460,13 @@ static void testEstimatorStopAndDropout() {
     feedFor(est, c, 7.0, ms, 20);
     feedNone(est, c, ms, 12);
     CHECK(est.state() == SpeedState::Holding);
-    const double v2 = quantized(c, 2.0);
     int frames = 0;
-    while (fabs(est.speedMps() - v2) > 0.2 && frames < 10) {
+    while (fabsf(est.speedMps() - 2.0f) > 0.2f && frames < 10) {
       feedFor(est, c, 2.0, ms, 1);
       frames++;
     }
     CHECK(frames <= 4);
     CHECK(est.state() == SpeedState::Tracking);
-  }
-
-  // LD2451 沒有目標時約每 1.4 秒才送一個空資料框：中間完全沒有資料框，逾時照樣由 update() 處理
-  {
-    GroundSpeedEstimator est;
-    uint32_t ms = 1000;
-    feedFor(est, c, 6.0, ms, 20);
-    for (int i = 0; i < 25; i++) est.update(ms += 100);
-    CHECK(est.state() == SpeedState::Lost);
   }
 
   // 雷達離線：速度未知
@@ -540,31 +482,40 @@ static void testEstimatorStopAndDropout() {
 
 static void testEstimatorRejection() {
   printf("[GroundSpeedEstimator：剔除不是路面的量測]\n");
-  const SpeedConfig c = SpeedConfig::defaults();
-  const double v5 = quantized(c, 5.0);
+  const SpeedConfig c = noFold();
+  const GroundWindow w = groundWindow(c);
 
   GroundSpeedEstimator est;
   uint32_t ms = 1000;
   feedFor(est, c, 5.0, ms, 20);
 
-  // 距離窗口外（後方 12 m 的物體）、水平角太大
+  // 外插資料框（速度、能量都與上一筆相同）：不算量測
   ms += 100;
-  CHECK(est.onFrame(frameOf({makeTarget(12, 16, false)}), ms, c).verdict == FrameVerdict::OutOfGate);
+  const RadarMeasurement real = target(0.99f, 3.50f, 77777);
+  CHECK(est.onFrame(real, ms, c).verdict == FrameVerdict::Accepted);
   ms += 100;
-  CHECK(est.onFrame(frameOf({makeTarget(1, 16, false, 45)}), ms, c).verdict == FrameVerdict::OutOfGate);
+  RadarMeasurement echo = real;
+  echo.rangeM += 0.35f;
+  CHECK(est.onFrame(echo, ms, c).verdict == FrameVerdict::Repeated);
 
-  // 方向相反（從後面追上來的車）
+  // 距離窗口外（後方 5 m 的車、太近的擋泥板）
   ms += 100;
-  const FrameResult wrong = est.onFrame(frameOf({makeTarget(2, 10, true)}), ms, c);
+  CHECK(est.onFrame(target(5.0f, 4.0f, 1234), ms, c).verdict == FrameVerdict::OutOfGate);
+  ms += 100;
+  CHECK(est.onFrame(target(w.minRangeM - 0.05f, 4.0f, 1235), ms, c).verdict == FrameVerdict::OutOfGate);
+
+  // 方向相反（迎面接近的物體）
+  ms += 100;
+  const FrameResult wrong = est.onFrame(target(0.99f, -3.0f, 1236), ms, c);
   CHECK(wrong.verdict == FrameVerdict::WrongDirection);
   CHECK(wrong.hasGround);
 
   // 單筆離群值（車輪、腳）：剔除，速度不受影響
   ms += 100;
-  CHECK(est.onFrame(frameOf({makeTarget(1, 22, false)}), ms, c).verdict == FrameVerdict::Outlier);
-  CHECK_NEAR(est.speedMps(), v5, 0.05);
+  CHECK(est.onFrame(target(0.99f, 6.5f, 1237), ms, c).verdict == FrameVerdict::Outlier);
+  CHECK_NEAR(est.speedMps(), 5.0, 0.05);
   feedFor(est, c, 5.0, ms, 1);
-  CHECK_NEAR(est.speedMps(), v5, 0.05);
+  CHECK_NEAR(est.speedMps(), 5.0, 0.05);
   CHECK(est.state() == SpeedState::Tracking);
 
   // 停著時偶爾出現的雜散目標：一兩筆不會讓車速跳起來（要 3 筆一致）
@@ -572,14 +523,14 @@ static void testEstimatorRejection() {
   uint32_t ms2 = 1000;
   feedNone(idle, c, ms2, 5);
   ms2 += 100;
-  idle.onFrame(frameOf({makeTarget(1, 8, false)}), ms2, c);
+  idle.onFrame(target(1.2f, 2.5f, 501), ms2, c);
   ms2 += 100;
-  idle.onFrame(frameOf({makeTarget(2, 2, false)}), ms2, c);
+  idle.onFrame(target(1.4f, 0.6f, 502), ms2, c);
   ms2 += 100;
-  idle.onFrame(frameOf({makeTarget(1, 13, false)}), ms2, c);
+  idle.onFrame(target(1.1f, 4.0f, 503), ms2, c);
   CHECK(idle.state() != SpeedState::Tracking);
   CHECK(idle.speedMps() == 0.0f);
-  feedNone(idle, c, ms2, 12);
+  feedNone(idle, c, ms2, 8);
   CHECK(idle.state() == SpeedState::Stopped);
 
   // DIR 設反：地面回波全部「方向相反」→ 不會量到速度，但 WD 會提示
@@ -594,64 +545,145 @@ static void testEstimatorRejection() {
   CHECK(f.state() == SpeedState::Stopped);
   CHECK(f.wrongDirectionPct() == 100);
   CHECK(f.qualityPct() == 0);
+
+  // 接近 C4001 測速上限：不採用；一直超過 → 「超過測速上限」而不是一般的訊號中斷
+  GroundSpeedEstimator fast;
+  uint32_t ms4 = 1000;
+  feedFor(fast, c, 12.0, ms4, 20);
+  CHECK(fast.state() == SpeedState::Tracking);
+  const double vLimit = (c.radialLimitMps - 0.02) / cos(rad(45));  // 截斷的雷達：讀值停在上限
+  ms4 += 100;
+  CHECK(fast.onFrame(ideal(c, vLimit), ms4, c).verdict == FrameVerdict::AtLimit);
+  for (int i = 0; i < 25; i++) {
+    ms4 += 100;
+    fast.onFrame(ideal(c, vLimit), ms4, c);
+  }
+  CHECK(fast.state() == SpeedState::OverRange);
+  CHECK(!fast.hasSpeed());
+}
+
+// ------------------------------------------------------------ 估計器：雷達測速上限（VMAX）
+
+static void testRadialLimit() {
+  printf("[GroundSpeedEstimator：測速上限、折疊]\n");
+  SpeedConfig c = SpeedConfig::defaults();
+  CHECK_NEAR(c.radialLimitMps, 3.28, 1e-6);  // 預設：假設 C4001 的上限只有 3.28 m/s（45° 時約 16.7 km/h）
+  const double cos45 = cos(rad(45));
+
+  // 會折疊的雷達：2 → 8 m/s（1 m/s²），徑向 1.41 → 5.66，在 4.5 m/s 越過上限
+  GroundSpeedEstimator fold;
+  uint32_t ms = 1000;
+  int unfolded = 0, wrong = 0;
+  for (int k = 0; k <= 60; k++) {
+    const double v = 2.0 + 0.1 * k;
+    ms += 100;
+    const FrameResult r = fold.onFrame(target(0.99f, foldRadial(v * cos45, 3.28), 3000 + k), ms, c);
+    CHECK(!r.limitExceeded);  // 會折疊的雷達不會回報超過上限的值：不會誤觸自動調高
+    unfolded += r.verdict == FrameVerdict::Unfolded;
+    wrong += r.verdict == FrameVerdict::WrongDirection;
+  }
+  CHECK(fold.state() == SpeedState::Tracking);
+  CHECK_NEAR(fold.speedMps(), 8.0, 0.3);
+  CHECK(unfolded > 20);
+  CHECK(wrong == 0);
+  CHECK(fold.qualityPct() >= 80);  // 折疊還原的也算可用量測
+
+  // 會截斷的雷達：超過上限後一直回報 3.2 → 「超出測速上限」，不會卡在 16 km/h 當成真的速度
+  GroundSpeedEstimator cap;
+  ms = 1000;
+  for (int k = 0; k <= 60; k++) {
+    const double v  = 2.0 + 0.1 * k;
+    const double vr = v * cos45 < 3.25 ? v * cos45 : 3.26 + 0.005 * (k % 3);
+    ms += 100;
+    cap.onFrame(target(0.99f, static_cast<float>(vr), 4000 + k), ms, c);
+  }
+  CHECK(cap.state() == SpeedState::OverRange);
+  CHECK(!cap.hasSpeed());
+
+  // 雷達其實能量到更高（不折疊、上限 10）：量到 |vr| > VMAX + 0.3 就回報 limitExceeded，
+  // SpeedRadarApp 會把 VMAX 調為 10；調整前估計器照樣追蹤（候選值只往上加 2·VMAX，不會誤還原）
+  GroundSpeedEstimator high;
+  ms = 1000;
+  int exceeded = 0;
+  for (int i = 0; i < 30; i++) {
+    ms += 100;
+    exceeded += high.onFrame(ideal(c, 6.0), ms, c).limitExceeded;  // 徑向 4.24 m/s
+  }
+  CHECK(exceeded == 30);
+  CHECK(high.state() == SpeedState::Tracking);
+  CHECK_NEAR(high.speedMps(), 6.0, 0.05);
+
+  // 訊號中斷後重新擷取：用中斷前的速度還原折疊（不然高速時折疊的讀值會被當成「方向相反」而永遠接不回來）
+  GroundSpeedEstimator relock;
+  ms = 1000;
+  for (int k = 0; k <= 40; k++) {  // 加速到 7 m/s（徑向 4.95，已折疊）
+    ms += 100;
+    relock.onFrame(target(0.99f, foldRadial(fmin(7.0, 2.0 + 0.2 * k) * cos45, 3.28), 5000 + k), ms, c);
+  }
+  CHECK(relock.state() == SpeedState::Tracking);
+  CHECK_NEAR(relock.speedMps(), 7.0, 0.3);
+  feedNone(relock, c, ms, 25);  // 2.5 秒沒有回波
+  CHECK(relock.state() == SpeedState::Lost);
+  for (int k = 0; k < 4; k++) {
+    ms += 100;
+    relock.onFrame(target(0.99f, foldRadial(6.8 * cos45, 3.28), 6000 + k), ms, c);
+  }
+  CHECK(relock.state() == SpeedState::Tracking);
+  CHECK_NEAR(relock.speedMps(), 6.8, 0.3);
+
+  // 折疊的雷達上，追蹤中看到的負值會被解釋成折疊（與真正迎面而來的物體無法分辨，這是折疊本身的限制）
+  GroundSpeedEstimator amb;
+  ms = 1000;
+  for (int k = 0; k <= 40; k++) {
+    ms += 100;
+    amb.onFrame(target(0.99f, foldRadial(fmin(5.0, 2.0 + 0.2 * k) * cos45, 3.28), 7000 + k), ms, c);
+  }
+  ms += 100;
+  CHECK(amb.onFrame(target(0.99f, -3.0f, 7999), ms, c).verdict != FrameVerdict::WrongDirection);
 }
 
 // ------------------------------------------------------------ 估計器：雜訊下的精度（模擬）
-// 典型情境：散射點俯角分散 7°、水平角分散 8°、雷達雜訊 0.1 m/s、上下震動 0.1 m/s、每框 1～3 個路面點、90% 有回波
-static GroundRadarSim typicalSim() {
+static void testEstimatorAccuracy() {
+  printf("[GroundSpeedEstimator：雜訊、加減速、雜散目標]\n");
+  SpeedConfig c = noFold();
+
+  // 典型雜訊：散射點俯角分散 6°、雷達雜訊 0.1 m/s、上下震動 0.1 m/s、90% 有回波
   GroundRadarSim sim;
-  sim.spreadDeg      = 7;
-  sim.azSpreadDeg    = 8;
+  sim.spreadDeg      = 6;
   sim.radialNoiseMps = 0.10;
   sim.bounceMps      = 0.10;
   sim.pDetect        = 0.9;
-  sim.maxPoints      = 3;
-  return sim;
-}
-
-static void testEstimatorAccuracy() {
-  printf("[GroundSpeedEstimator：雜訊、加減速、雜散目標]\n");
-  const SpeedConfig c = SpeedConfig::defaults();
-
-  // 平均誤差看的是「沒有偏移」時估計器本身有沒有偏差（實際路面的偏移由 CAL 校正，見模擬報告）
-  GroundRadarSim sim = typicalSim();
+  sim.rangeNoiseM    = 0.03;
   RunStats s = runProfile(sim, c, cruise6, 60, 11);
-  CHECK(s.rmsErr < 0.35);
-  CHECK(fabs(s.meanErrPct) < 3.0);
-  CHECK(fabs(s.distErrPct) < 3.0);
+  CHECK(s.rmsErr < 0.30);
+  CHECK(fabs(s.meanErrPct) < 1.5);
+  CHECK(fabs(s.distErrPct) < 1.5);
   CHECK(s.trackingPct > 95);
 
   // 加速 2 m/s²、急煞 −4 m/s² 到停：跟得上，停下後判定靜止，里程誤差小
   RunStats ab = runProfile(sim, c, accelBrake, 20, 12);
-  CHECK(ab.rmsErr < 0.7);
-  CHECK(fabs(ab.distErrPct) < 4.0);
+  CHECK(ab.rmsErr < 0.6);
+  CHECK(fabs(ab.distErrPct) < 3.0);
 
   // 城市騎乘：起步、變速、停等、再起步
   RunStats mix = runProfile(sim, c, rideMix, 45, 13);
-  CHECK(mix.rmsErr < 0.5);
-  CHECK(fabs(mix.distErrPct) < 4.0);
+  CHECK(mix.rmsErr < 0.45);
+  CHECK(fabs(mix.distErrPct) < 3.0);
 
-  // 15% 雜散目標（車、行人、車輪）
+  // 15% 雜散目標（車輪、腳、路人）
   GroundRadarSim noisy = sim;
   noisy.pOutlier = 0.15;
   noisy.pDetect  = 0.8;
   RunStats o = runProfile(noisy, c, cruise6, 60, 14);
-  CHECK(o.rmsErr < 0.5);
-  CHECK(fabs(o.distErrPct) < 4.0);
+  CHECK(o.rmsErr < 0.45);
+  CHECK(fabs(o.distErrPct) < 3.0);
 
   // 回波斷斷續續（只有 50% 有回波）：仍然追蹤，不會一直掉到「訊號中斷」
   GroundRadarSim sparse = sim;
   sparse.pDetect = 0.5;
   RunStats sp = runProfile(sparse, c, cruise6, 60, 15);
   CHECK(sp.trackingPct > 90);
-  CHECK(sp.rmsErr < 0.5);
-
-  // 每框只有 1 個路面點（沒有中位數可取）：雜訊大一些，但仍可用
-  GroundRadarSim single = sim;
-  single.maxPoints = 1;
-  RunStats one = runProfile(single, c, cruise6, 60, 17);
-  CHECK(one.rmsErr < 0.5);
-  CHECK(one.trackingPct > 95);
+  CHECK(sp.rmsErr < 0.45);  // 一半的資料框沒有回波：可用量測少一半，雜訊約 √2 倍
 
   // 停車時不會亂跳：靜止 30 秒（沒有回波 + 偶爾雜散目標）
   GroundRadarSim idleSim;
@@ -669,30 +701,31 @@ static void testEstimatorAccuracy() {
 // ------------------------------------------------------------ 模型比較：固定角度 vs 距離幾何
 static void testModels() {
   printf("[速度模型：固定角度 vs 距離幾何]\n");
-  SpeedConfig fixedCfg = SpeedConfig::defaults();
+  SpeedConfig fixedCfg = noFold();
   SpeedConfig geomCfg  = fixedCfg;
   geomCfg.model        = SpeedModel::RangeGeometry;
 
-  // 散射點偏向正下方 10°（光滑路面）：固定角度模型低估約 cos 40° / cos 30° = 0.885（−11.5%），可用 CAL 校正
+  // 散射點偏向正下方 10°（光滑路面）：固定角度模型低估（cos 55° / cos 45° = 0.81），距離幾何不受影响
   GroundRadarSim smooth;
   smooth.shiftDeg       = 10;
   smooth.spreadDeg      = 6;
   smooth.radialNoiseMps = 0.05;
-  smooth.maxPoints      = 3;
+  smooth.rangeNoiseM    = 0.01;
   const RunStats f = runProfile(smooth, fixedCfg, cruise6, 30, 21);
-  CHECK(f.meanErrPct < -8 && f.meanErrPct > -15);
-
-  // 距離幾何：LD2451 的距離只有整數公尺（1.4 m 報成 1 m 時俯角 30° 變 44°），未校正前有明顯偏差，
-  // 偏差大小取決於雷達怎麼取整數（文件沒寫）；校正後與固定角度差不多（模擬報告）。所以預設固定角度（MODEL 0）
   const RunStats g = runProfile(smooth, geomCfg, cruise6, 30, 21);
-  CHECK(g.trackingPct > 95);
-  CHECK(fabs(g.meanErrPct) < 20);
+  CHECK(f.meanErrPct < -15 && f.meanErrPct > -22);
+  CHECK(fabs(g.meanErrPct) < 2.0);
+
+  // 距離量測有偏差（+5 cm）時，距離幾何也會偏，但仍可用 CAL 校正（偏差固定）
+  GroundRadarSim biased = smooth;
+  biased.rangeBiasM = 0.05;
+  const RunStats gb = runProfile(biased, geomCfg, cruise6, 30, 22);
+  CHECK(gb.meanErrPct < 0 && gb.meanErrPct > -10);
 }
 
 // 印出各情境的平均表現（docs/ALGORITHM.md §9 的數據來源）：每種情境 20 次
 static void printScenarioReport() {
-  printf("\n[情境報告] LD2451 斜照路面 30°：俯角分散 7°、水平角分散 8°、雷達雜訊 0.1 m/s、上下震動 0.1 m/s、"
-         "每框 1～3 個路面點、90%% 有回波；每種 20 次的平均\n");
+  printf("\n[情境報告] 俯角分散 7°、雷達雜訊 0.1 m/s、上下震動 0.1 m/s、90%% 有回波；每種 20 次的平均\n");
   printf("  %-34s %10s %10s %10s %10s\n", "情境", "RMS m/s", "平均誤差%", "里程誤差%", "有速度%");
   struct Scenario {
     const char* name;
@@ -700,22 +733,23 @@ static void printScenarioReport() {
     double      seconds;
     double      pDetect;
     double      pOutlier;
-    int         maxPoints;
+    double      foldLimit;
   };
   const Scenario scenarios[] = {
-      {"起步後 6 m/s 巡航", cruiseFromRest, 60, 0.9, 0.0, 3},
-      {"加速 2 m/s² 到 8 m/s、急煞 −4 m/s²", accelBrake, 20, 0.9, 0.0, 3},
-      {"城市騎乘（變速、停等、再起步）", rideMix, 45, 0.9, 0.0, 3},
-      {"15% 雜散目標（車、行人、車輪）", cruiseFromRest, 60, 0.8, 0.15, 3},
-      {"只有 50% 的資料框有回波", cruiseFromRest, 60, 0.5, 0.0, 3},
-      {"每框只有 1 個路面點", cruiseFromRest, 60, 0.9, 0.0, 1},
+      {"起步後 6 m/s 巡航", cruiseFromRest, 60, 0.9, 0.0, 0},
+      {"加速 2 m/s² 到 8 m/s、急煞 −4 m/s²", accelBrake, 20, 0.9, 0.0, 0},
+      {"城市騎乘（變速、停等、再起步）", rideMix, 45, 0.9, 0.0, 0},
+      {"15% 雜散目標（車輪、腳、路人）", cruiseFromRest, 60, 0.8, 0.15, 0},
+      {"只有 50% 的資料框有回波", cruiseFromRest, 60, 0.5, 0.0, 0},
+      {"折疊的雷達（上限 3.28 m/s）城市騎乘", rideMix, 45, 0.9, 0.0, 3.28},
   };
-  const SpeedConfig cfg = SpeedConfig::defaults();
   for (const Scenario& sc : scenarios) {
+    SpeedConfig cfg = sc.foldLimit > 0 ? SpeedConfig::defaults() : noFold();
     double rms = 0, mean = 0, dist = 0, known = 0;
     for (int rep = 0; rep < 20; rep++) {
-      GroundRadarSim sim = typicalSim();
-      sim.pDetect = sc.pDetect, sim.pOutlier = sc.pOutlier, sim.maxPoints = sc.maxPoints;
+      GroundRadarSim sim;
+      sim.spreadDeg = 7, sim.radialNoiseMps = 0.1, sim.bounceMps = 0.1, sim.rangeNoiseM = 0.03;
+      sim.pDetect = sc.pDetect, sim.pOutlier = sc.pOutlier, sim.foldLimit = sc.foldLimit;
       const RunStats r = runProfile(sim, cfg, sc.profile, sc.seconds, 500 + rep * 13);
       rms += r.rmsErr / 20;
       mean += r.meanErrPct / 20;
@@ -726,35 +760,41 @@ static void printScenarioReport() {
   }
 }
 
-// 印出模擬比較表（docs/ALGORITHM.md §9 的數據來源）：功率加權讓散射點偏向正下方（C4001 時期的文獻回顧：
-// 漫射路面約 +7.5°、平滑／潮濕約 +14°），CAL 在乾柏油上以 3 趟 100 m 距離校正後換到其他路面
+// 印出模擬比較表（docs/ALGORITHM.md §9 的數據來源）。
+// 散射點的加權偏移取自文獻回顧的物理模型（高斯波束 40°×100°、Viikari 2009 的 24 GHz 柏油 σ0）：
+// 漫射路面的峰值偏差約 −14%（等效偏移 +7.5°），平滑／潮濕路面約 −27%（+14°）。單框散佈 ±12%（俯角分散 7°）
 static void printSimulationReport() {
   printf("\n[模擬報告] 起步後 6 m/s 巡航 60 s × 20 次；CAL 在乾柏油上以 3 趟 100 m 距離校正（起終點停住），再換到其他路面\n");
   printf("  %-30s %-10s %10s %10s %10s\n", "路面（等效偏移）", "模型", "平均誤差%", "RMS m/s", "里程誤差%");
   struct Surface {
     const char* name;
     double      shiftDeg;
+    double      rangeBiasM;
   };
   const Surface surfaces[] = {
-      {"乾柏油 +7.5°（校正用）", 7.5},
-      {"粗糙漫射面 +6.5°", 6.5},
-      {"平滑／潮濕 +14°", 14.0},
+      {"乾柏油 +7.5°（校正用）", 7.5, 0.0},
+      {"粗糙漫射面 +6.5°", 6.5, 0.0},
+      {"平滑／潮濕 +14°", 14.0, 0.0},
+      {"乾柏油、距離偏差 +3 cm", 7.5, 0.03},
   };
   for (int model = 0; model < 2; model++) {
-    SpeedConfig cfg = SpeedConfig::defaults();
+    SpeedConfig cfg = noFold();
     cfg.model       = model == 0 ? SpeedModel::FixedAngle : SpeedModel::RangeGeometry;
-    GroundRadarSim base = typicalSim();
-    base.shiftDeg = 7.5;
+    GroundRadarSim base;
+    base.shiftDeg = 7.5, base.spreadDeg = 7, base.radialNoiseMps = 0.1, base.bounceMps = 0.1, base.rangeNoiseM = 0.03;
+    base.pDetect = 0.9;
     // 校正：乾柏油上 3 趟 100 m（與實際程序相同：起點停住 → 加速 → 巡航 → 在終點停住），
     // CAL = 真實總距離 / 量到的總距離
     double measured = 0;
     for (int run = 0; run < 3; run++) measured += 100.0 * (1.0 + runProfile(base, cfg, calibrationRun, 25, 90 + run).distErrPct / 100.0);
     cfg.calibration = static_cast<float>(300.0 / measured);
     for (const Surface& sf : surfaces) {
+      if (model == 0 && sf.rangeBiasM != 0.0) continue;  // 固定角度模型不用距離，不受影響
       double mean = 0, rms = 0, dist = 0;
       for (int rep = 0; rep < 20; rep++) {
         GroundRadarSim s = base;
         s.shiftDeg       = sf.shiftDeg;
+        s.rangeBiasM     = sf.rangeBiasM;
         const RunStats r = runProfile(s, cfg, cruiseFromRest, 60, 1000 + rep * 7);
         mean += r.meanErrPct / 20;
         rms += r.rmsErr / 20;
@@ -762,7 +802,6 @@ static void printSimulationReport() {
       }
       printf("  %-30s %-10s %10.2f %10.3f %10.2f\n", sf.name, model == 0 ? "固定角度" : "距離幾何", mean, rms, dist);
     }
-    printf("  %-30s %-10s CAL = %.4f\n", "", model == 0 ? "固定角度" : "距離幾何", cfg.calibration);
   }
   printf("\n");
 }
@@ -818,11 +857,10 @@ static void testCommands() {
   CHECK(parseCommand("FOO 1").type == CommandType::Unknown);
   CHECK(parseCommand("MINSPD 1.5").type == CommandType::Unknown);  // 舊版（後方來車）的指令
 
-  CHECK(applyCommand(parseCommand("angle 40"), c, &err));
-  CHECK_NEAR(c.angleDeg, 40.0, 1e-6);
-  CHECK(applyCommand(parseCommand("ANGLE=10"), c, &err));   // 邊界值
+  CHECK(applyCommand(parseCommand("angle 30"), c, &err));
+  CHECK_NEAR(c.angleDeg, 30.0, 1e-6);
+  CHECK(applyCommand(parseCommand("ANGLE=15"), c, &err));   // 邊界值
   CHECK(applyCommand(parseCommand("ANGLE 75"), c, &err));
-  CHECK(!applyCommand(parseCommand("ANGLE 9.9"), c, &err));
   CHECK(!applyCommand(parseCommand("ANGLE 80"), c, &err));
   CHECK(!applyCommand(parseCommand("ANGLE 45abc"), c, &err));
   CHECK(!applyCommand(parseCommand("ANGLE"), c, &err));
@@ -851,16 +889,12 @@ static void testCommands() {
   CHECK(!applyCommand(parseCommand("CAL 2.01"), c, &err));
   CHECK(!applyCommand(parseCommand("CAL 0"), c, &err));
 
-  CHECK(isConfigCommand(CommandType::RadarSnr));
-  CHECK(applyCommand(parseCommand("gsnr 6"), c, &err) && c.radarSnr == 6);
-  CHECK(applyCommand(parseCommand("GSNR 3"), c, &err) && applyCommand(parseCommand("GSNR 8"), c, &err));
-  CHECK(!applyCommand(parseCommand("GSNR 2"), c, &err));
-  CHECK(!applyCommand(parseCommand("GSNR 9"), c, &err));
-  CHECK(!applyCommand(parseCommand("GSNR 5.5"), c, &err));
-  CHECK(c.radarSnr == 8);
-  // C4001 時期的指令（4.0 起拿掉）
-  CHECK(parseCommand("RTHR 5").type == CommandType::Unknown);
-  CHECK(parseCommand("VMAX 10").type == CommandType::Unknown);
+  CHECK(isConfigCommand(CommandType::RadarThreshold));
+  CHECK(applyCommand(parseCommand("rthr 10"), c, &err) && c.radarThreshold == 10);
+  CHECK(!applyCommand(parseCommand("RTHR 0"), c, &err));
+  CHECK(!applyCommand(parseCommand("RTHR 51"), c, &err));
+  CHECK(!applyCommand(parseCommand("RTHR 5.5"), c, &err));
+  CHECK(c.radarThreshold == 10);
 
   CHECK(isConfigCommand(CommandType::Wheel));
   CHECK(applyCommand(parseCommand("WHEEL 2070"), c, &err) && c.wheelMm == 2070);
@@ -871,6 +905,14 @@ static void testCommands() {
   CHECK(!isConfigCommand(CommandType::Get));
   CHECK(!isConfigCommand(CommandType::Reboot));
   CHECK(!applyCommand(parseCommand("GET"), c, &err));
+
+  CHECK(isConfigCommand(CommandType::RadialLimit));
+  CHECK(applyCommand(parseCommand("VMAX 3.2"), c, &err));
+  CHECK_NEAR(c.radialLimitMps, 3.2, 1e-6);
+  CHECK(applyCommand(parseCommand("vmax 20"), c, &err));
+  CHECK(!applyCommand(parseCommand("VMAX 1.5"), c, &err));
+  CHECK(!applyCommand(parseCommand("VMAX 25"), c, &err));
+  CHECK_NEAR(c.radialLimitMps, 20.0, 1e-6);
 
   // 後方來車
   CHECK(isConfigCommand(CommandType::RearRange) && isConfigCommand(CommandType::RearTtc));
@@ -894,27 +936,23 @@ static void testCommands() {
   CHECK(!applyCommand(parseCommand("RSNR 9"), c, &err));
   CHECK(!applyCommand(parseCommand("RSNR 4.5"), c, &err));
   CHECK(strstr(kHelpText, "RANGE") != nullptr && strstr(kHelpText, "TTC") != nullptr);
-  CHECK(strstr(kHelpText, "GSNR") != nullptr);
-  CHECK(strstr(kHelpText, "RTHR") == nullptr && strstr(kHelpText, "VMAX") == nullptr);
 
   CHECK(applyCommand(parseCommand("DEFAULTS"), c, &err));
   CHECK(c.rear.rangeM == 15 && c.rear.minSpeedKmh == 5 && c.rear.snr == 4);
   CHECK_NEAR(c.rear.ttcS, 2.5, 1e-6);
-  CHECK_NEAR(c.angleDeg, 30.0, 1e-6);
+  CHECK_NEAR(c.radialLimitMps, 3.28, 1e-6);
+  CHECK_NEAR(c.angleDeg, 45.0, 1e-6);
   CHECK_NEAR(c.heightM, 0.70, 1e-6);
   CHECK(c.direction == 1 && c.model == SpeedModel::FixedAngle);
   CHECK_NEAR(c.calibration, 1.0, 1e-6);
-  CHECK(c.radarSnr == 4 && c.wheelMm == 2105);
+  CHECK(c.radarThreshold == 5 && c.wheelMm == 2105);
   CHECK(c.isValid());
 
   SpeedConfig bad = SpeedConfig::defaults();
   bad.calibration = NAN;
   CHECK(!bad.isValid());
   bad = SpeedConfig::defaults();
-  bad.radarSnr = 9;
-  CHECK(!bad.isValid());
-  bad = SpeedConfig::defaults();
-  bad.angleDeg = 9.0f;
+  bad.radialLimitMps = 0.5f;
   CHECK(!bad.isValid());
   bad = SpeedConfig::defaults();
   bad.direction = 0;
@@ -935,8 +973,8 @@ static void testCommands() {
 }
 
 // ------------------------------------------------------------ 輸出格式
-static RadarFrame  rearFrame(std::initializer_list<RadarTarget> targets);
-static RadarTarget rearTarget(double distanceM, double speedKmh, bool approaching = true, int angle = 0);
+static RearFrame  rearFrame(std::initializer_list<RearTarget> targets);
+static RearTarget rearTarget(double distanceM, double speedKmh, bool approaching = true, int angle = 0);
 
 static bool hasToken(const char* line, const char* token) {
   const size_t n = strlen(token);
@@ -962,32 +1000,16 @@ static void testTelemetry() {
   s.qualityPct       = 95;
   s.frame            = 1234;
   s.hasFrame         = true;
-  s.raw              = frameOf({makeTarget(6, 40, false, 9, 50), makeTarget(2, 14, false, -2, 12), makeTarget(1, 15, false)});
+  s.raw              = target(0.86f, 3.84f, 52000);
   s.result.verdict   = FrameVerdict::Accepted;
-  s.result.target    = 1;
-  s.result.candidates = 3;
   s.result.hasGround = true;
   s.result.groundMps = 5.40f;
   s.radarDistanceM   = 1234.56;
   s.uptimeS          = 812;
   size_t n = formatTelemetry(s, line, sizeof(line));
   CHECK(n > 0 && line[n - 1] == '\n');
-  CHECK(strcmp(line, "R=1 RO=0 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=3 A=-2 RD=2 RV=3.89 S=12 G=5.40 FV=0 DR=1234.6 T=812\n") == 0);
+  CHECK(strcmp(line, "R=1 ST=3 V=5.43 SD=0.12 Q=95 WD=0 FN=1234 N=1 RD=0.86 RV=3.84 E=52000 G=5.40 FV=0 DR=1234.6 T=812\n") == 0);
   CHECK(!hasToken(line, "W=5.51"));  // 沒接輪速感測器就不送 W、DW
-
-  // 只接收模式、代表目標是靠近中的（方向相反）：RV 為負
-  TelemetrySnapshot ro = s;
-  ro.receiveOnly    = true;
-  ro.raw            = frameOf({makeTarget(5, 18, true, 4, 33)});
-  ro.result.target  = 0;
-  ro.result.verdict = FrameVerdict::WrongDirection;
-  n = formatTelemetry(ro, line, sizeof(line));
-  CHECK(hasToken(line, "RO=1") && hasToken(line, "A=4") && hasToken(line, "RD=5") && hasToken(line, "RV=-5.00"));
-  CHECK(hasToken(line, "S=33") && hasToken(line, "FV=4") && hasToken(line, "N=1"));
-  // 代表目標的位置不合理（不該發生）：當作沒有目標，不會讀到陣列外
-  ro.result.target = 7;
-  n = formatTelemetry(ro, line, sizeof(line));
-  CHECK(n > 0 && hasToken(line, "RD=-1") && hasToken(line, "A=0") && hasToken(line, "S=0"));
 
   // 有輪速感測器
   s.hasWheel       = true;
@@ -1004,8 +1026,8 @@ static void testTelemetry() {
   idle.hasFrame    = true;
   idle.frame       = 7;
   n = formatTelemetry(idle, line, sizeof(line));
-  CHECK(hasToken(line, "ST=1") && hasToken(line, "V=0.00") && hasToken(line, "N=0") && hasToken(line, "RD=-1"));
-  CHECK(hasToken(line, "G=-1.00") && hasToken(line, "FV=1") && hasToken(line, "RO=0"));
+  CHECK(hasToken(line, "ST=1") && hasToken(line, "V=0.00") && hasToken(line, "N=0") && hasToken(line, "RD=-1.00"));
+  CHECK(hasToken(line, "G=-1.00") && hasToken(line, "FV=1"));
 
   // 訊號中斷：速度未知 → V=-1
   TelemetrySnapshot lost = idle;
@@ -1017,10 +1039,8 @@ static void testTelemetry() {
   // 雷達離線：狀態 0、速度未知、不送舊的原始值；輪速照送
   TelemetrySnapshot off = s;
   off.radarOnline = false;
-  off.receiveOnly = true;
   n = formatTelemetry(off, line, sizeof(line));
   CHECK(hasToken(line, "R=0") && hasToken(line, "ST=0") && hasToken(line, "V=-1.00") && hasToken(line, "N=0"));
-  CHECK(hasToken(line, "RD=-1") && hasToken(line, "RO=0"));
   CHECK(hasToken(line, "W=5.51"));
 
   // 最長的一行也放得下（含輪速）
@@ -1030,11 +1050,7 @@ static void testTelemetry() {
   big.qualityPct     = 100;
   big.wrongDirPct    = 100;
   big.frame          = 4294967295UL;
-  big.receiveOnly    = true;
-  big.raw            = frameOf({makeTarget(255, 255, true, -128, 255), makeTarget(255, 255, true, -128, 255),
-                                makeTarget(255, 255, true, -128, 255), makeTarget(255, 255, true, -128, 255),
-                                makeTarget(255, 255, true, -128, 255)});
-  big.result.target  = 4;
+  big.raw            = target(99.0f, -99.0f, 4000000000UL);
   big.result.verdict = FrameVerdict::Acquiring;
   big.result.groundMps = 500.0f;
   big.radarDistanceM = 1e9;
@@ -1050,17 +1066,17 @@ static void testTelemetry() {
   // 設定
   char cfgLine[kConfigLineMax];
   const SpeedConfig d = SpeedConfig::defaults();
-  n = formatConfig(d, "4.0.0", cfgLine, sizeof(cfgLine));
+  n = formatConfig(d, "3.0.0", cfgLine, sizeof(cfgLine));
   CHECK(n > 0);
-  const char* cfgPrefix = "CFG ANGLE=30.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 GSNR=4 WHEEL=2105 RMIN=0.71 RMAX=8.13 ";
+  const char* cfgPrefix = "CFG ANGLE=45.0 HEIGHT=0.70 DIR=1 MODEL=0 CAL=1.0000 RTHR=5 WHEEL=2105 VMAX=3.28 RMIN=";
   CHECK(strncmp(cfgLine, cfgPrefix, strlen(cfgPrefix)) == 0);
-  CHECK(hasToken(cfgLine, "FW=4.0.0"));
-  CHECK(strstr(cfgLine, "RTHR=") == nullptr && strstr(cfgLine, "VMAX=") == nullptr);
+  CHECK(hasToken(cfgLine, "FW=3.0.0"));
   CHECK(hasToken(cfgLine, "RANGE=15") && hasToken(cfgLine, "RSPD=5") && hasToken(cfgLine, "TTC=2.5"));
   CHECK(hasToken(cfgLine, "RSNR=4") && hasToken(cfgLine, "RDET=25"));
   CHECK(strstr(cfgLine, "TEST=") == nullptr && strstr(cfgLine, "MINSPD=") == nullptr);  // 網頁用這兩個鍵判斷 2.x 舊韌體
   SpeedConfig wide = d;
-  wide.angleDeg = 10, wide.heightM = 1.5f, wide.calibration = 1.9999f, wide.radarSnr = 8, wide.wheelMm = 3000;
+  wide.angleDeg = 15, wide.heightM = 1.5f, wide.calibration = 1.9999f, wide.radarThreshold = 50, wide.wheelMm = 3000;
+  wide.radialLimitMps = 20.0f;
   wide.rear.rangeM = 50, wide.rear.minSpeedKmh = 30, wide.rear.ttcS = 6.0f, wide.rear.snr = 8;
   n = formatConfig(wide, "10.20.30-beta", cfgLine, sizeof(cfgLine));
   CHECK(n > 0 && n <= 180 - 3);  // 一個 BLE 通知送得完
@@ -1147,7 +1163,7 @@ static void testLD2451Protocol() {
   const uint8_t idle[] = {0xF4, 0xF3, 0xF2, 0xF1, 0x00, 0x00, 0xF8, 0xF7, 0xF6, 0xF5};
   LD2451FrameType type = LD2451FrameType::None;
   CHECK(feedLD2451(p, idle, sizeof(idle), &type) == 1 && type == LD2451FrameType::Report && p.length() == 0);
-  RadarFrame f;
+  RearFrame f;
   CHECK(decodeLD2451Report(p.payload(), p.length(), f) && f.count == 0);
 
   // 兩個目標：正後方偏左 3° 12 m 靠近 30 km/h；偏右 6° 31 m 遠離 40 km/h
@@ -1206,20 +1222,20 @@ static void testLD2451Protocol() {
 }
 
 // ------------------------------------------------------------ 後方來車：警示判斷
-static RadarFrame rearFrame(std::initializer_list<RadarTarget> targets) {
-  RadarFrame f;
-  for (const RadarTarget& t : targets) {
-    if (f.count < kRadarMaxTargets) f.targets[f.count++] = t;
+static RearFrame rearFrame(std::initializer_list<RearTarget> targets) {
+  RearFrame f;
+  for (const RearTarget& t : targets) {
+    if (f.count < kRearMaxTargets) f.targets[f.count++] = t;
   }
   return f;
 }
 
-static RadarTarget rearTarget(double distanceM, double speedKmh, bool approaching, int angle) {
-  RadarTarget t;
+static RearTarget rearTarget(double distanceM, double speedKmh, bool approaching, int angle) {
+  RearTarget t;
   t.angleDeg  = static_cast<int8_t>(angle);
   t.distanceM = static_cast<uint8_t>(lround(distanceM < 0 ? 0 : distanceM));  // LD2451 的距離是整數公尺
   t.speedKmh  = static_cast<uint8_t>(lround(speedKmh));
-  t.direction = approaching ? kApproachByte : 0;
+  t.direction = approaching ? kRearApproachByte : 0;
   t.snr       = 30;
   return t;
 }
@@ -1397,11 +1413,12 @@ static void testRearThreat() {
 }
 
 int main() {
+  testFrameParser();
   testGeometry();
   testEstimatorBasics();
-  testEstimatorTargets();
   testEstimatorStopAndDropout();
   testEstimatorRejection();
+  testRadialLimit();
   testEstimatorAccuracy();
   testModels();
   testWheelSpeed();

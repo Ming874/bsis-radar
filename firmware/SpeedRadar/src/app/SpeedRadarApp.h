@@ -3,8 +3,8 @@
  * @brief  【應用層】把各層模組組裝起來，並負責主迴圈排程與指令處理。
  *
  * 每次 loop 的資料流：
- *   LD2451Radar 測速（資料框）→ GroundSpeedEstimator（對地速度、里程）→ Telemetry（格式化）→ BleLink / USB
- *   LD2451Radar 後方（資料框）→ RearThreat（來車警示）→ Telemetry 的 REAR 行 → BleLink / USB
+ *   C4001Radar（資料框）→ GroundSpeedEstimator（對地速度、里程）→ Telemetry（格式化）→ BleLink / USB
+ *   LD2451Radar（後方資料框）→ RearThreat（來車警示）→ Telemetry 的 REAR 行 → BleLink / USB
  *   WheelSensor（輪速脈衝）→ WheelSpeed（參考速度、里程）→ Telemetry 的 W / DW 欄位
  *   BleLink / USB（指令）→ CommandParser（解析驗證）→ SettingsStore（存 NVS）→ 必要時重新設定雷達
  */
@@ -16,6 +16,7 @@
 #include "../core/RearThreat.h"
 #include "../core/SpeedConfig.h"
 #include "../core/WheelSpeed.h"
+#include "../drivers/C4001Radar.h"
 #include "../drivers/LD2451Radar.h"
 #include "../drivers/StatusLed.h"
 #include "../drivers/WheelSensor.h"
@@ -24,10 +25,10 @@
 class SpeedRadarApp {
  public:
   struct Wiring {
-    HardwareSerial&       radarPort;  // 測速雷達 LD2451（斜照路面）
-    HardwareSerial&       rearPort;   // 後方來車雷達 LD2451（朝正後方）
-    Stream&               console;    // USB 序列埠：輸出與 BLE 相同的遙測 + 接收指令
-    LD2451Radar::Settings radar;
+    HardwareSerial&       radarPort;
+    HardwareSerial&       rearPort;  // 後方來車雷達 LD2451
+    Stream&               console;   // USB 序列埠：輸出與 BLE 相同的遙測 + 接收指令
+    C4001Radar::Settings  radar;
     LD2451Radar::Settings rear;
     BleLink::Config      ble;
     int8_t               ledPin;
@@ -57,13 +58,14 @@ class SpeedRadarApp {
   void       applyRearDetection(uint32_t nowMs);
   void       logRearLevel();
   void       publishRear(uint32_t nowMs);
+  void       raiseRadialLimit(float observedMps);
   void       publishTelemetry(uint32_t nowMs);
   LedPattern ledPattern() const;
 
   Stream&              console_;
-  LD2451Radar          radar_;  // 測速雷達
+  C4001Radar           radar_;
   GroundSpeedEstimator estimator_;
-  LD2451Radar          rear_;   // 後方來車雷達
+  LD2451Radar          rear_;
   RearThreat           threat_;
   BleLink              ble_;
   BleLink::Config      bleConfig_;
@@ -77,14 +79,14 @@ class SpeedRadarApp {
   const char* const firmwareVersion_;
   const bool        allowBleConfig_;
 
-  RadarFrame       lastRaw_;
+  RadarMeasurement lastRaw_;
   FrameResult      lastResult_;
   bool             hasFrame_       = false;
   uint32_t         lastFrameMs_    = 0;
   uint32_t         lastPublishMs_  = 0;
   bool             radarWasOnline_ = false;
 
-  RadarFrame        lastRearFrame_;
+  RearFrame        lastRearFrame_;
   bool             hasRearFrame_      = false;
   uint32_t         lastRearFrameMs_   = 0;
   uint32_t         rearFrames_        = 0;

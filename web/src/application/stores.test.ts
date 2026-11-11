@@ -183,7 +183,6 @@ describe('rearAlertStore', () => {
 describe('tripStore', () => {
   const tele = (at: number, dr: number, dw: number | null, uptimeS = 100) => ({
     radarOnline: true,
-    receiveOnly: false,
     state: 'tracking' as const,
     speedMps: 5,
     sigmaMps: 0.1,
@@ -191,10 +190,9 @@ describe('tripStore', () => {
     wrongDirPct: 0,
     frame: at,
     targets: 1,
-    angleDeg: 0,
-    rangeM: 1,
+    rangeM: 0.99,
     radialMps: 3.5,
-    snr: 20,
+    energy: 1000,
     groundMps: 5,
     verdict: 'accepted' as const,
     radarDistanceM: dr,
@@ -271,7 +269,6 @@ describe('overspeedStore', () => {
   const LIMIT = 25 / 3.6;
   const at = (ms: number, kmh: number, state: 'tracking' | 'lost' = 'tracking') => ({
     radarOnline: true,
-    receiveOnly: false,
     state,
     speedMps: kmh / 3.6,
     sigmaMps: 0.1,
@@ -279,10 +276,9 @@ describe('overspeedStore', () => {
     wrongDirPct: 0,
     frame: ms / 100,
     targets: 1,
-    angleDeg: 0,
-    rangeM: 1,
+    rangeM: 0.99,
     radialMps: 3.5,
-    snr: 20,
+    energy: 1000,
     groundMps: kmh / 3.6,
     verdict: 'accepted' as const,
     radarDistanceM: 0,
@@ -292,7 +288,7 @@ describe('overspeedStore', () => {
     receivedAt: ms,
   });
   const ride = (store: ReturnType<typeof createOverspeedStore>, fromMs: number, toMs: number, kmh: number) => {
-    for (let ms = fromMs; ms < toMs; ms += 100) store.getState().onTelemetry(at(ms, kmh), LIMIT);
+    for (let ms = fromMs; ms < toMs; ms += 100) store.getState().onTelemetry(at(ms, kmh), LIMIT, null);
   };
 
   it('進入超速時提示一次；在速限附近反覆進出時最多每 5 秒提示一次', () => {
@@ -300,7 +296,7 @@ describe('overspeedStore', () => {
     let clock = 0;
     const store = createOverspeedStore({ alert: () => alerts.push(clock) });
     const step = (to: number, kmh: number) => {
-      for (; clock < to; clock += 100) store.getState().onTelemetry(at(clock, kmh), LIMIT);
+      for (; clock < to; clock += 100) store.getState().onTelemetry(at(clock, kmh), LIMIT, null);
     };
     step(1000, 27);
     expect(store.getState().active).toBe(true);
@@ -322,7 +318,7 @@ describe('overspeedStore', () => {
     const store = createOverspeedStore({ alert: () => undefined });
     ride(store, 0, 1000, 30);
     expect(store.getState().active).toBe(true);
-    store.getState().onTelemetry(at(1000, 30, 'lost'), LIMIT);
+    store.getState().onTelemetry(at(1000, 30, 'lost'), LIMIT, null);
     expect(store.getState().active).toBe(false);
     ride(store, 2000, 3000, 30);
     store.getState().reset();

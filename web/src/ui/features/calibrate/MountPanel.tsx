@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { radarStore, useRadar } from '../../../application/container';
 import { LIMITS, diffConfig, groundWindow } from '../../../domain/protocol';
 import type { EditableConfig, SpeedModel } from '../../../domain/types';
-import { Card, Row, Section, Segmented, Stepper, inRange } from '../../kit';
+import { Card, Notice, Row, Section, Segmented, Stepper, inRange } from '../../kit';
 import { MountDiagram } from '../../widgets/MountDiagram';
 import { PendingBar } from '../common/PendingBar';
 
@@ -35,6 +35,7 @@ export function MountPanel() {
   const set = (patch: Partial<MountFields>) => setDraft((d) => ({ ...d, ...patch }));
   const pending = diffConfig(config, { ...config, ...value });
   const valid = inRange(value.angleDeg, LIMITS.angleDeg.min, LIMITS.angleDeg.max) && inRange(value.heightM, LIMITS.heightM.min, LIMITS.heightM.max);
+  const geometryChanged = pending.some((c) => c.type === 'angle' || c.type === 'height');
   const preview = groundWindow(value.angleDeg, value.heightM);
 
   const apply = async () => {
@@ -50,12 +51,12 @@ export function MountPanel() {
           </div>
         </div>
         <div className="[&>*+*]:border-t [&>*+*]:border-line">
-          <Row label="俯角 θ" detail="建議 25～35°；30° 時 1° 誤差約 1%。太陡的話路面離雷達不到 1 m">
+          <Row label="俯角 θ" detail="建議 40～45°；1° 誤差約 1.7%">
             <Stepper label="俯角" value={value.angleDeg} onChange={(v) => set({ angleDeg: v })} min={LIMITS.angleDeg.min} max={LIMITS.angleDeg.max} step={0.5} decimals={1} unit="°" width="w-12" />
           </Row>
           <Row
             label="離地高度 h"
-            detail={`視軸打在 ${(value.heightM / Math.tan((value.angleDeg * Math.PI) / 180)).toFixed(2)} m 外（斜距 ${preview.boresightM.toFixed(1)} m）；距離窗口 ${preview.minDistanceM}～${preview.maxDistanceM} m`}
+            detail={`視軸打在 ${(value.heightM / Math.tan((value.angleDeg * Math.PI) / 180)).toFixed(2)} m 外；窗口 ${preview.minM.toFixed(2)}～${preview.maxM.toFixed(2)} m`}
           >
             <Stepper label="離地高度" value={value.heightM} onChange={(v) => set({ heightM: v })} min={LIMITS.heightM.min} max={LIMITS.heightM.max} step={0.01} decimals={2} unit="m" width="w-12" />
           </Row>
@@ -75,8 +76,8 @@ export function MountPanel() {
             stack
             detail={
               value.model === 'fixedAngle'
-                ? '固定角度：v = |vr| / (cos θ · cos 水平角)。不依賴雷達的距離（建議）'
-                : '距離幾何：每個目標用 sin α = h / 距離 算俯角。LD2451 的距離只有整數公尺，偏差取決於雷達怎麼取整數；換模型後要重新校正（實驗性）'
+                ? '固定角度：v = |vr| / cos θ。文獻上的標準作法，不依賴雷達距離的準確度'
+                : '距離幾何：每一筆用 sin α = h / 距離 算俯角。可降低路面材質造成的偏差，但需要準確的高度與距離（實驗性）'
             }
           >
             <Segmented<SpeedModel>
@@ -91,6 +92,13 @@ export function MountPanel() {
             />
           </Row>
         </div>
+        {geometryChanged && (
+          <div className="px-3 pb-3">
+            <Notice tone="info" flat title="套用後 ESP32 會重新設定雷達">
+              地面距離窗口會寫進 C4001，約 4 秒內沒有資料。
+            </Notice>
+          </div>
+        )}
         <PendingBar count={pending.length} valid={valid} applying={applying} onReset={() => setDraft({})} onApply={() => void apply()} />
       </Card>
     </Section>

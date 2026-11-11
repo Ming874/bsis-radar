@@ -21,13 +21,13 @@ bool RearThreat::consumeLevelChange() {
   return true;
 }
 
-void RearThreat::onFrame(const RadarFrame& frame, uint32_t nowMs, const RearConfig& cfg) {
+void RearThreat::onFrame(const RearFrame& frame, uint32_t nowMs, const RearConfig& cfg) {
   // 1～2. 候選中到達時間最短的（接近速度太小的用距離比）
-  const RadarTarget* lead = nullptr;
+  const RearTarget* lead = nullptr;
   float bestTtc = INFINITY, bestRange = INFINITY;
-  const uint8_t n = frame.count < kRadarMaxTargets ? frame.count : kRadarMaxTargets;
+  const uint8_t n = frame.count < kRearMaxTargets ? frame.count : kRearMaxTargets;
   for (uint8_t i = 0; i < n; i++) {
-    const RadarTarget& t = frame.targets[i];
+    const RearTarget& t = frame.targets[i];
     if (!t.approaching() || t.speedKmh < cfg.minSpeedKmh || t.distanceM > cfg.detectRangeM()) continue;
     const float range = t.distanceM > 0 ? static_cast<float>(t.distanceM) : 0.5f;  // 0 = 不到 1 m
     const float v     = t.speedKmh / 3.6f;
