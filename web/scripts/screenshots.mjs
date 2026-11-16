@@ -32,8 +32,8 @@ const SHOTS = [
   { out: `${IMG}/phone-calibrate.png`, path: '?demo&screenshot#/calibrate', device: PHONE, waitS: 6, dark: true },
   { out: `${IMG}/phone-ride.png`, path: '?demo&screenshot#/ride', device: PHONE, waitS: 36, dark: true },
   { out: `${IMG}/phone-ride-alert.png`, path: '?demo&screenshot#/ride', device: PHONE, waitS: 75, dark: true },
-  // 後方來車（示範模式的來車時刻表：約 19.5 秒注意、29.5 秒危險）
-  { out: `${IMG}/phone-rear-caution.png`, path: '?demo&screenshot#/speed', device: PHONE, waitS: 20, dark: true, scroll: '#rear-card' },
+  // 後方來車（示範模式的來車時刻表：約 19.5 秒注意、29.5 秒危險）；後方來車卡片在速度頁最上面，不用捲動
+  { out: `${IMG}/phone-rear-caution.png`, path: '?demo&screenshot#/speed', device: PHONE, waitS: 20, dark: true },
   { out: `${IMG}/phone-ride-rear.png`, path: '?demo&screenshot#/ride', device: PHONE, waitS: 30, dark: true },
   { out: `${IMG}/phone-rear-setup.png`, path: '?demo&screenshot#/calibrate', device: PHONE, waitS: 30, dark: false, scroll: '#rear' },
   { out: `${IMG}/phone-install.png`, path: '?demo&screenshot&install#/speed', device: PHONE, waitS: 6, dark: false, ua: ANDROID_UA },

@@ -27,9 +27,9 @@
     { "name": "校正", "short_name": "校正", "url": "/#/calibrate", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
   ],
   "screenshots": [
-    { "src": "/screenshots/phone-speed.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "速度：對地速度與本次行程" },
+    { "src": "/screenshots/phone-speed.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "速度：後方來車與對地速度" },
     { "src": "/screenshots/phone-trips.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "行程：紀錄與速度曲線" },
     { "src": "/screenshots/phone-calibrate.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "校正：設定進度與安裝幾何" },
-    { "src": "/screenshots/desktop-speed.png", "sizes": "1440x900", "type": "image/png", "form_factor": "wide", "label": "電腦版：速度與量測設定" }
+    { "src": "/screenshots/desktop-speed.png", "sizes": "1440x900", "type": "image/png", "form_factor": "wide", "label": "電腦版：後方來車、速度與量測設定" }
   ]
 }

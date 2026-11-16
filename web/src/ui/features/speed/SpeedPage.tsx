@@ -1,6 +1,6 @@
 /**
- * 【速度】主畫面：對地速度（大字）、量測狀態、超速警示、後方來車、騎乘模式、本次行程、速度趨勢圖。
- * 騎車時手機裝在龍頭上：最重要的數字最大、其他資訊安靜地放在下面。超速時數字與外框變紅；
+ * 【速度】主畫面：後方來車（最上面）、對地速度（大字）、量測狀態、超速警示、騎乘模式、本次行程、速度趨勢圖。
+ * 專題主題是後方來車（盲點）偵測，所以後方來車卡片放第一個，對地速度放在它下面（電腦版在右欄最上面）。超速時數字與外框變紅；
  * 後方來車卡片在注意時外框變黃、危險時變紅。
  */
 import { useState } from 'react';
@@ -264,11 +264,13 @@ function useRearSupported(): boolean {
 export function SpeedPage() {
   const connected = useRadar((r) => r.connection.status === 'connected');
   const rear = useRearSupported();
-  // 電腦版兩欄：左邊速度＋趨勢圖、右邊行程＋量測設定；手機一欄：速度 → 行程 → 趨勢圖
+  // 專題主題是後方來車（盲點）偵測，所以後方來車放最上面、車速放在它原本的位置：
+  // 電腦版兩欄：左邊後方來車＋趨勢圖、右邊速度＋行程＋量測設定；手機一欄：後方來車 → 速度 → 行程 → 趨勢圖。
+  // 韌體沒有後方雷達（3.0）時不顯示後方卡片，速度回到最上面。
   const desktop = useMediaQuery(DESKTOP);
   return (
     <>
-      <PageHeader title="速度" description="C4001 斜照路面量對地速度、LD2451 朝後偵測來車" />
+      <PageHeader title="速度" description="LD2451 朝後偵測來車、C4001 斜照路面量對地速度" />
       <DeviceNotices />
       {!connected && (
         <div className="mb-4">
@@ -277,13 +279,13 @@ export function SpeedPage() {
       )}
       <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
         <div className="grid gap-3 lg:gap-4">
-          <SpeedHero />
+          {rear ? <RearCard /> : <SpeedHero />}
           <QuickActions />
-          {!desktop && rear && <RearCard />}
+          {!desktop && rear && <SpeedHero />}
           {desktop && <ChartCard />}
         </div>
         <div className="grid gap-4">
-          {desktop && rear && <RearCard />}
+          {desktop && rear && <SpeedHero />}
           <TripCard />
           {!desktop && <ChartCard />}
           <MeasurementCard />

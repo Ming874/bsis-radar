@@ -11,13 +11,12 @@ ESP32 同時讀兩顆 24 GHz 毫米波雷達，以藍牙送到網頁顯示：
 3.0 時 C4001 由「後方來車偵測」改為「對地測速」；3.1 再加上 LD2451 專門偵測後方來車。2.x 舊版保留在 git 歷史（韌體 2.4.0，commit `8a5c3b6`）。
 
 <p align="center">
-  <img src="docs/images/phone-speed.png" width="200" alt="手機版速度頁（深色）">
-  <img src="docs/images/phone-rear-caution.png" width="200" alt="後方來車卡片：11 m、接近 12 km/h">
+  <img src="docs/images/phone-speed.png" width="200" alt="手機版速度頁：最上面是後方來車（12 m、注意），下面是對地速度">
   <img src="docs/images/phone-ride-rear.png" width="200" alt="騎乘模式：後方來車時直條與邊框變紅">
   <img src="docs/images/phone-ride-alert.png" width="200" alt="騎乘模式：超速時整個畫面變紅">
 </p>
 <p align="center">
-  <img src="docs/images/desktop-speed.png" width="760" alt="電腦版速度頁：對地速度、後方來車、本次行程、速度趨勢">
+  <img src="docs/images/desktop-speed.png" width="760" alt="電腦版速度頁：後方來車、對地速度、本次行程、速度趨勢">
 </p>
 <p align="center"><sub>截圖為示範模式（<code>?demo</code>）的模擬資料。</sub></p>
 

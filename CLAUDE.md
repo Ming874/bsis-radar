@@ -19,7 +19,7 @@
 - `web/`：網頁（React + TypeScript + Vite），`npm test`、`npm run lint`、`npm run build`。這台電腦 2026-11 沒有 Node.js（`C:\Program Files\nodejs` 不存在）：用 VS Code 內建的 Node，`ELECTRON_RUN_AS_NODE=1 "%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe" node_modules/vitest/vitest.mjs run`（tsc、eslint、vite 同理，跑 `node_modules` 裡的腳本）。網頁的主版本要和韌體相同（`FIRMWARE_MAJOR`），不同時會提示
   - 設計語言和 Lodestar（`C:\GitHub\lodestar`）統一：同樣的 token 名稱（`bg`、`surface`、`ink`、`muted`、`faint`、`line`、`tint`）、大標題頁面、卡片 20 px 圓角、膠囊按鈕、底部面板、浮動分頁列；BSIS 的重點色是藍（`#1765e5`）。仍然不用漸層、光暈、彩色圖示底；只有浮在內容上的導覽用半透明材質。元件在 `web/src/ui/kit`、基準在 `web/src/index.css`，頁面在 `ui/features`，外框在 `ui/shell`
   - 五個分頁：速度、行程、校正、數據、設定，加上騎乘模式（`#/ride`）；手機是浮動分頁列，電腦（≥ 1024 px）是左欄 + 雙欄；分頁同步到網址 `#/speed` 等
-  - 後方來車：速度頁 `RearCard`、騎乘模式右側直條（`ui/widgets/RearRadar`）、校正頁 `RearPanel`、設定頁「後方來車警示」、數據頁「後方雷達」；提示規則在 `domain/rear.ts`（注意柔和兩聲、危險急促四聲每 1.5 秒重複）。資料中斷或後方雷達離線時絕不顯示「安全」
+  - 後方來車：速度頁 `RearCard`（3.3 起放在最上面、對地速度在它下面，因為專題主題是盲點偵測）、騎乘模式右側直條（`ui/widgets/RearRadar`）、校正頁 `RearPanel`、設定頁「後方來車警示」、數據頁「後方雷達」；提示規則在 `domain/rear.ts`（注意柔和兩聲、危險急促四聲每 1.5 秒重複）。資料中斷或後方雷達離線時絕不顯示「安全」
   - PWA：用瀏覽器打開就提醒安裝（規則在 `infrastructure/pwa/install.ts`）；`public/sw.js` 照建置產生的 `precache.json` 離線快取；新版本靠 `/version.json` 比對，不自動重新載入（會中斷藍牙）
   - 截圖：`npm run screenshots`（`scripts/screenshots.mjs`，DevTools Protocol 模擬手機；先 `npm run dev -- --port 5180`）
   - 示範模式 `?demo`（`infrastructure/transport/DemoTransport.ts`）：不需要硬體，也用來產生 `docs/images` 的截圖。後方來車照固定時刻表出現（約 19.5 秒注意、29.5 秒危險、75 秒沒有車），截圖才穩定
